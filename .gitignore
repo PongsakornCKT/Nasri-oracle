@@ -1,10 +1,62 @@
-# Cloned external repos (they live on their own GitHub repos)
-opencode-archived/
-oracle-skills-cli/
-oracle-framework/
-multi-agent-workflow-kit/
-oracle-v2/
-opensource-nat-brain-oracle/
-oracle-studio/
-soul-brews-cat-lab-webhook-relay/
+# Cloned repositories — not part of Nasri's household
+Pha-Oracle/
+claude-browser-proxy/
 maw-js/
+opencode-archived/
+opensource-nat-brain-oracle/
+oracle-cli/
+oracle-framework/
+oracle-identity/
+oracle-proof-of-concept-skills/
+oracle-skills-cli/
+oracle-skills-physical/
+oracle-studio/
+oracle-v2/
+oracle-vault-report/
+oracle-voice-tray/
+plugin-marketplace/
+soul-brews-cat-lab-webhook-relay/
+multi-agent-workflow-kit/
+agency-agents/
+
+# Shell scripts (operational, not project code)
+deploy-and-test.sh
+launch-agents.sh
+port-forward-wsl.ps1
+redeploy.sh
+restart-maw.sh
+setup-wsl.sh
+start-maw-wsl.vbs
+# start-maw.sh is now tracked (no secrets — machine paths only)
+
+# Local settings
+.claude/settings.local.json
+.claude/commands/
+
+# Secrets
+.env
+*.credentials
+
+# Build artifacts
+__pycache__/
+node_modules/
+*.pyc
+
+# Temp files
+nul
+tmppic/
+.mcp-z/
+
+# Added by Multi-Agent Workflow Kit
+/.agents
+/agents
+/.envrc
+/MAW-*
+.claude/*
+!.claude/commands/
+.codex/*
+!.codex/prompts/
+!.codex/prompts/**
+.claude/commands/maw.*
+.claude/commands/maw-*
+.codex/prompts/maw*.md
