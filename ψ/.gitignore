@@ -1,7 +1,9 @@
-# Untracked pillars
-active/
-memory/logs/
-learn/
+# Ephemeral / local-only content
+# Folders are tracked via .gitkeep, but contents are ignored
+memory/logs/*
+learn/*
+!memory/logs/.gitkeep
+!learn/.gitkeep
 
 # State files
 .awaken-state.json
