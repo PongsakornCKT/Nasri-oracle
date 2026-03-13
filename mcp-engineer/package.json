@@ -1,0 +1,15 @@
+{
+  "name": "mcp-engineer",
+  "version": "0.1.0",
+  "description": "Engineering Room MCP — 22 specialist agents from agency-agents/engineering",
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.6"
+  }
+}

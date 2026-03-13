@@ -26,6 +26,14 @@ def scan_files() -> list[Path]:
     return sorted(files)
 
 
+def scan_jsonl_files() -> list[Path]:
+    """Find all .jsonl files in ψ/memory/logs (non-recursive)."""
+    logs_dir = MEMORY_DIRS.get("logs")
+    if not logs_dir or not logs_dir.exists():
+        return []
+    return sorted(logs_dir.glob("*.jsonl"))
+
+
 def detect_layer(filepath: Path) -> str:
     """Determine which memory layer a file belongs to."""
     for layer, dirpath in MEMORY_DIRS.items():
@@ -104,6 +112,80 @@ def split_large_section(text: str, max_chars: int = SECTION_MAX_CHARS) -> list[s
     return chunks
 
 
+# ── JSONL ingest ───────────────────────────────────────
+
+def ingest_jsonl_file(filepath: Path) -> list[Chunk]:
+    """Ingest a .jsonl token-usage file. One Chunk per tool + one summary Chunk."""
+    from collections import defaultdict
+
+    stem = filepath.stem
+    tool_entries: dict[str, list[dict]] = defaultdict(list)
+
+    for raw_line in filepath.read_text(encoding="utf-8").splitlines():
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            entry = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        tool = entry.get("tool", "unknown")
+        tool_entries[tool].append(entry)
+
+    chunks = []
+    grand_total_calls = 0
+    grand_total_tokens = 0
+
+    for tool_name, entries in sorted(tool_entries.items()):
+        calls = len(entries)
+        total_tokens = sum(e.get("total_tokens", 0) for e in entries)
+        avg_tokens = round(total_tokens / calls) if calls else 0
+        last_ts = max(e.get("ts", "") for e in entries)
+
+        text = (
+            f"tool: {tool_name} | calls: {calls} | "
+            f"total_tokens: {total_tokens} | avg: {avg_tokens} | last: {last_ts}"
+        )
+        chunk_id = f"logs::{stem}::{tool_name}::0"
+        chunks.append(Chunk(
+            id=chunk_id,
+            text=text,
+            metadata={
+                "source_file": filepath.name,
+                "layer": "logs",
+                "section": tool_name,
+                "private": False,
+                "chunk_index": 0,
+                "type": "token-usage",
+            },
+        ))
+        grand_total_calls += calls
+        grand_total_tokens += total_tokens
+
+    # Summary chunk for the whole file
+    n_tools = len(tool_entries)
+    summary_text = (
+        f"Token usage summary | tools: {n_tools} | "
+        f"total_calls: {grand_total_calls} | "
+        f"grand_total_tokens: {grand_total_tokens} | "
+        f"file: {filepath.name}"
+    )
+    chunks.append(Chunk(
+        id=f"logs::{stem}::summary::0",
+        text=summary_text,
+        metadata={
+            "source_file": filepath.name,
+            "layer": "logs",
+            "section": "summary",
+            "private": False,
+            "chunk_index": 0,
+            "type": "token-usage",
+        },
+    ))
+
+    return chunks
+
+
 # ── Ingest ─────────────────────────────────────────────
 
 def ingest_file(filepath: Path) -> list[Chunk]:
@@ -136,58 +218,64 @@ def ingest_file(filepath: Path) -> list[Chunk]:
 
 
 def ingest_all(force: bool = False) -> tuple[list[Chunk], list[str]]:
-    """Ingest ψ/memory markdown files. Returns (chunks, stale_ids).
+    """Ingest ψ/memory markdown and .jsonl files. Returns (chunks, stale_ids).
 
     P2: Skips unchanged files unless force=True.
     P1: Returns stale chunk IDs from deleted/renamed files.
     """
-    files = scan_files()
+    md_files = scan_files()
+    jsonl_files = scan_jsonl_files()
     manifest = load_manifest()
     new_manifest = {}
     all_chunks = []
     skipped = 0
 
-    for f in files:
-        # Use layer-relative path as key to avoid collisions in subdirectories
+    def _process_file(f: Path, ingest_fn) -> None:
+        nonlocal skipped
         layer = detect_layer(f)
         layer_root = MEMORY_DIRS.get(layer)
         fkey = f"{layer}/{f.relative_to(layer_root)}" if layer_root else str(f.name)
         fhash = file_hash(f)
         new_manifest[fkey] = fhash
 
-        # P2: skip unchanged files
         if not force and manifest.get(fkey) == fhash:
             skipped += 1
-            continue
+            return
 
         try:
-            file_chunks = ingest_file(f)
+            file_chunks = ingest_fn(f)
             all_chunks.extend(file_chunks)
             print(f"  + {fkey} -> {len(file_chunks)} chunks")
         except Exception as e:
             print(f"  ! {fkey} FAILED: {e}")
 
+    for f in md_files:
+        _process_file(f, ingest_file)
+
+    for f in jsonl_files:
+        _process_file(f, ingest_jsonl_file)
+
     if skipped:
         print(f"  = {skipped} unchanged files skipped")
 
     # P1: detect stale files (in old manifest but not in current scan)
+    all_files = md_files + jsonl_files
     current_files = {
         f"{detect_layer(f)}/{f.relative_to(MEMORY_DIRS[detect_layer(f)])}"
         if detect_layer(f) in MEMORY_DIRS else str(f.name)
-        for f in files
+        for f in all_files
     }
     stale_files = set(manifest.keys()) - current_files
     stale_ids = []
     if stale_files:
         for sf in stale_files:
             print(f"  - {sf} removed (will clean stale chunks)")
-        # We'll return stale file names so run.py can delete their chunks
         stale_ids = list(stale_files)
 
     save_manifest(new_manifest)
 
-    total = len(files)
-    changed = len(files) - skipped
+    total = len(all_files)
+    changed = total - skipped
     print(f"\n  Total: {total} files, {changed} changed, {len(all_chunks)} chunks")
     return all_chunks, stale_ids
 

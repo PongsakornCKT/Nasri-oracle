@@ -1,0 +1,9 @@
+{
+  "name": "nasri-line-bot",
+  "version": "0.1.0",
+  "description": "Nasri LINE OA Bot for Enervia Group",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {}
+}

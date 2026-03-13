@@ -1,0 +1,18 @@
+{
+  "name": "nasri-line-bot",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Nasri LINE OA Bot — BOM & quotation assistant for Enervia Group",
+  "scripts": {
+    "dev": "bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.12.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
