@@ -5,5 +5,9 @@ learn/*
 !memory/logs/.gitkeep
 !learn/.gitkeep
 
+# Embedding engine
+lab/embedding/.env
+lab/embedding/chroma_data/
+
 # State files
 .awaken-state.json
