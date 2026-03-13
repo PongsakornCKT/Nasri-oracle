@@ -18,11 +18,11 @@ class Chunk:
 # ── File scanning ──────────────────────────────────────
 
 def scan_files() -> list[Path]:
-    """Find all .md files in ψ/memory subdirectories."""
+    """Find all .md files in ψ/memory subdirectories (recursive)."""
     files = []
     for layer, dirpath in MEMORY_DIRS.items():
         if dirpath.exists():
-            files.extend(dirpath.glob("*.md"))
+            files.extend(dirpath.rglob("*.md"))
     return sorted(files)
 
 
@@ -148,7 +148,10 @@ def ingest_all(force: bool = False) -> tuple[list[Chunk], list[str]]:
     skipped = 0
 
     for f in files:
-        fkey = str(f.name)
+        # Use layer-relative path as key to avoid collisions in subdirectories
+        layer = detect_layer(f)
+        layer_root = MEMORY_DIRS.get(layer)
+        fkey = f"{layer}/{f.relative_to(layer_root)}" if layer_root else str(f.name)
         fhash = file_hash(f)
         new_manifest[fkey] = fhash
 
@@ -160,15 +163,19 @@ def ingest_all(force: bool = False) -> tuple[list[Chunk], list[str]]:
         try:
             file_chunks = ingest_file(f)
             all_chunks.extend(file_chunks)
-            print(f"  + {f.name} -> {len(file_chunks)} chunks")
+            print(f"  + {fkey} -> {len(file_chunks)} chunks")
         except Exception as e:
-            print(f"  ! {f.name} FAILED: {e}")
+            print(f"  ! {fkey} FAILED: {e}")
 
     if skipped:
         print(f"  = {skipped} unchanged files skipped")
 
     # P1: detect stale files (in old manifest but not in current scan)
-    current_files = {str(f.name) for f in files}
+    current_files = {
+        f"{detect_layer(f)}/{f.relative_to(MEMORY_DIRS[detect_layer(f)])}"
+        if detect_layer(f) in MEMORY_DIRS else str(f.name)
+        for f in files
+    }
     stale_files = set(manifest.keys()) - current_files
     stale_ids = []
     if stale_files:

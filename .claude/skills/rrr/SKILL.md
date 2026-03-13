@@ -16,3 +16,14 @@ Then persist the retrospective:
 - Keep entries concise — future Nasri should grasp it in seconds
 
 The knowledge flow: active context → logs → retrospectives → learnings → resonance
+
+## Auto-Record
+
+After writing the retrospective file, make a lightweight `oracle_learn` call to index it:
+
+- `pattern`: Single concise block — "Retro written for session [date]. Key learnings: [2-3 bullet points from What was learned]. Threads open: [What's next summary]."
+- `concepts`: `["skill-record", "skill/rrr", "retrospective"]` + any topic tags for the session's main theme
+- `source`: `"skill/rrr"`
+- `project`: `"nasri-oracle"`
+
+Keep it minimal — the full retro already lives in `ψ/memory/retrospectives/`. This just makes it searchable via oracle.

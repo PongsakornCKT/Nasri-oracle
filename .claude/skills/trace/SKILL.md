@@ -15,3 +15,19 @@ A butler knows where everything is. Investigate:
 Use Grep, Glob, and git log to search systematically.
 Show file paths and line numbers. Be thorough but organized.
 If the trace reveals something worth remembering, note it for ψ/memory/learnings/.
+
+## Auto-Record
+
+After completing the trace, call `oracle_learn` to record the findings:
+
+- `pattern`: Structured markdown with:
+  - **Target**: What was traced (`$ARGUMENTS`)
+  - **Located at**: File paths and line numbers where it was found
+  - **Dependencies**: What the target depends on; what depends on it
+  - **Flow**: The path from entry point to effect (call chain, data flow, etc.)
+  - **Patterns discovered**: Any non-obvious architecture decisions or conventions revealed
+- `concepts`: `["skill-record", "skill/trace"]` + tags for the component or domain traced (e.g., `"auth"`, `"routing"`, `"oracle_learn"`)
+- `source`: `"skill/trace"`
+- `project`: `"nasri-oracle"`
+
+Skip recording if the trace found nothing or was trivial (e.g., single-file lookup).

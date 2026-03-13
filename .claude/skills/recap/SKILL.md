@@ -12,3 +12,19 @@ Provide a session orientation for Pong. Follow the butler's protocol:
 
 Read git log, git status, and scan the ψ/ brain structure for context.
 Keep it concise — a butler briefs, he doesn't lecture.
+
+## Auto-Record
+
+After completing the recap, call `oracle_learn` to record this session orientation:
+
+- `pattern`: Structured markdown with:
+  - **Triggered**: What Pong asked / what context prompted the recap
+  - **State summary**: Current branch, key recent commits, project status at time of recap
+  - **Notable findings**: Anything uncommitted, open threads, or surprising state
+  - **Patterns**: Bullet list of any recurring patterns observed (e.g., "always mid-feature when recap called")
+  - **Principles applied**: Which of the 5 Principles guided the recap
+- `concepts`: `["skill-record", "skill/recap", "session-orientation"]` + any topic tags relevant to what was found (e.g., `"git"`, `"ψ-brain"`)
+- `source`: `"skill/recap"`
+- `project`: `"nasri-oracle"`
+
+Keep the record brief — one paragraph of context is enough.
