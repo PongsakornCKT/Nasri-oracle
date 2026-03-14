@@ -22,6 +22,18 @@ export type BomCategory =
   | "โมดูล"
   | "อินเวอร์เตอร์";
 
+export interface CostSummary {
+  equipment_total: number;
+  vat_7pct: number;
+  labor: number;
+  bos: number;
+  error_cost: number;
+  crane: number;
+  pea_mea_fee: number;
+  grand_total: number;
+  actual_wp: number;
+}
+
 export interface BomData {
   company_name: string;
   project_name: string;
@@ -29,6 +41,7 @@ export interface BomData {
   order_date: string;
   notes: string;
   items: BomItem[];
+  cost_summary?: CostSummary;
 }
 
 /** Conversation flow steps. */

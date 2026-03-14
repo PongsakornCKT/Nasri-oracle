@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "bun --watch src/server.ts",
     "start": "bun src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "echo 'TODO: src/ (Hono/Bun/ESM) is diverged from deploy/app.js (Express/CJS). Cannot auto-build yet. Keep deploy/app.js as source of truth until src/ is fully ported.' && exit 0"
   },
   "dependencies": {
     "hono": "^4.12.5"

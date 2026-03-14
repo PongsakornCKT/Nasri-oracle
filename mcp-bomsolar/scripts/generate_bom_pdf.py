@@ -267,7 +267,7 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
         logo = Paragraph('', styles['ThaiNormal'])
     
     # Title
-    title = Paragraph('รายการวัสดุของ Enervia group', styles['ThaiTitle'])
+    title = Paragraph('รายการวัสดุ ENERVIA GROUP', styles['ThaiTitle'])
     
     # Header table (Logo + Title)
     header_table = Table(
@@ -424,10 +424,100 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
     
     bom_table.setStyle(TableStyle(table_style))
     story.append(bom_table)
-    
+
+    # ==================== COST SUMMARY SECTION ====================
+
+    cost_summary = bom_data.get('cost_summary')
+    if cost_summary:
+        story.append(Spacer(1, 10*mm))
+
+        # Cost Summary title
+        cost_title = Paragraph('<b>Cost Summary</b>', ParagraphStyle(
+            'CostTitle', parent=styles['ThaiTitle'], fontSize=16, alignment=TA_LEFT,
+        ))
+        story.append(cost_title)
+        story.append(Spacer(1, 3*mm))
+
+        # Build cost summary rows
+        actual_wp = cost_summary.get('actual_wp', 0)
+        actual_kw_str = f"{actual_wp/1000:.2f}kW" if actual_wp else ""
+
+        cost_rows = [
+            [
+                Paragraph('<b>รายการ</b>', ParagraphStyle('CSHeader', fontName=FONT_BOLD, fontSize=10, textColor=COLORS['white'], alignment=TA_LEFT)),
+                Paragraph('<b>ราคา</b>', ParagraphStyle('CSHeaderR', fontName=FONT_BOLD, fontSize=10, textColor=COLORS['white'], alignment=TA_RIGHT)),
+            ],
+            [
+                Paragraph('รวมค่าอุปกรณ์', styles['ThaiNormal']),
+                Paragraph(format_currency(cost_summary.get('equipment_total', total_cost)), ParagraphStyle('CSRight', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+            ],
+            [
+                Paragraph(f"VAT 7% (จากค่าอุปกรณ์)", styles['ThaiNormal']),
+                Paragraph(format_currency(cost_summary.get('vat_7pct', 0)), ParagraphStyle('CSRight2', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+            ],
+            [
+                Paragraph(f"ค่าแรง ({actual_kw_str} × ฿4.5/Wp)" if actual_kw_str else "ค่าแรง", styles['ThaiNormal']),
+                Paragraph(format_currency(cost_summary.get('labor', 0)), ParagraphStyle('CSRight3', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+            ],
+            [
+                Paragraph(f"BOS ({actual_kw_str} × ฿0.7/Wp)" if actual_kw_str else "BOS", styles['ThaiNormal']),
+                Paragraph(format_currency(cost_summary.get('bos', 0)), ParagraphStyle('CSRight4', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+            ],
+            [
+                Paragraph(f"Error Cost ({actual_kw_str} × ฿1.0/Wp)" if actual_kw_str else "Error Cost", styles['ThaiNormal']),
+                Paragraph(format_currency(cost_summary.get('error_cost', 0)), ParagraphStyle('CSRight5', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+            ],
+        ]
+
+        # Crane (only if > 0)
+        crane = cost_summary.get('crane', 0)
+        if crane > 0:
+            cost_rows.append([
+                Paragraph('ค่าเครน', styles['ThaiNormal']),
+                Paragraph(format_currency(crane), ParagraphStyle('CSRight6', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+            ])
+
+        cost_rows.append([
+            Paragraph('ค่าขอขนาน PEA/MEA', styles['ThaiNormal']),
+            Paragraph(format_currency(cost_summary.get('pea_mea_fee', 0)), ParagraphStyle('CSRight7', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+        ])
+
+        # Grand Total row
+        cost_rows.append([
+            Paragraph('<b>Grand Total</b>', ParagraphStyle('CSGrand', fontName=FONT_BOLD, fontSize=12, textColor=COLORS['primary'], alignment=TA_LEFT)),
+            Paragraph(f"<b>{format_currency(cost_summary.get('grand_total', 0))}</b>", ParagraphStyle('CSGrandR', fontName=FONT_BOLD, fontSize=12, textColor=COLORS['primary'], alignment=TA_RIGHT)),
+        ])
+
+        cost_table = Table(cost_rows, colWidths=[160*mm, 60*mm])
+
+        cs_style = [
+            # Header
+            ('BACKGROUND', (0, 0), (-1, 0), COLORS['primary']),
+            ('TEXTCOLOR', (0, 0), (-1, 0), COLORS['white']),
+            # Grid
+            ('GRID', (0, 0), (-1, -1), 0.5, COLORS['border']),
+            # Grand total row
+            ('LINEABOVE', (0, -1), (-1, -1), 1.5, COLORS['primary']),
+            ('BACKGROUND', (0, -1), (-1, -1), COLORS['light_bg']),
+            # Padding
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]
+
+        # Alternate row colors for data rows
+        for i in range(1, len(cost_rows) - 1):
+            if i % 2 == 0:
+                cs_style.append(('BACKGROUND', (0, i), (-1, i), COLORS['light_bg']))
+
+        cost_table.setStyle(TableStyle(cs_style))
+        story.append(cost_table)
+
     # Build PDF
     doc.build(story)
-    
+
     return output_path
 
 

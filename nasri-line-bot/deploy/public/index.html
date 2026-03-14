@@ -3,29 +3,374 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nasri — Enervia AI Office</title>
+<title>Nasri AI Office — Enervia Group</title>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Sarabun', sans-serif; background: #1a1a2e; color: #f0e68c; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .card { background: #16213e; border: 1px solid #f0e68c33; border-radius: 16px; padding: 48px; max-width: 480px; text-align: center; }
-  h1 { font-size: 2rem; margin-bottom: 8px; }
-  .sub { color: #aaa; font-size: 0.9rem; margin-bottom: 24px; }
-  .status { background: #0f3460; border-radius: 8px; padding: 16px; margin-top: 16px; }
-  .dot { display: inline-block; width: 8px; height: 8px; background: #4ade80; border-radius: 50%; margin-right: 8px; }
-  a { color: #f0e68c; }
+  body { font-family: 'Sarabun', sans-serif; background: #0f0f1a; color: #e8e8f0; min-height: 100vh; }
+
+  /* ── Nav ── */
+  .nav { background: #16213e; border-bottom: 1px solid #f0e68c33; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+  .nav-brand { display: flex; align-items: center; gap: 12px; }
+  .nav-brand h1 { font-size: 1.3rem; color: #f0e68c; font-weight: 700; }
+  .nav-brand .sub { color: #888; font-size: 0.8rem; }
+  .nav-status { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #4ade80; }
+  .dot { width: 8px; height: 8px; background: #4ade80; border-radius: 50%; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 0; background: #16213e; border-bottom: 1px solid #f0e68c22; padding: 0 24px; overflow-x: auto; }
+  .tab { padding: 12px 20px; cursor: pointer; color: #888; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; font-size: 0.9rem; }
+  .tab:hover { color: #f0e68c; }
+  .tab.active { color: #f0e68c; border-bottom-color: #f0e68c; }
+
+  /* ── Layout ── */
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── Cards ── */
+  .card { background: #16213e; border: 1px solid #ffffff10; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { color: #f0e68c; font-size: 1.1rem; margin-bottom: 12px; }
+
+  /* ── Search ── */
+  .search-bar { display: flex; gap: 8px; margin-bottom: 20px; }
+  .search-bar input { flex: 1; padding: 10px 16px; background: #0f0f1a; border: 1px solid #ffffff20; border-radius: 8px; color: #e8e8f0; font-size: 0.95rem; font-family: inherit; outline: none; }
+  .search-bar input:focus { border-color: #f0e68c55; }
+  .search-bar button { padding: 10px 20px; background: #1a237e; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 0.9rem; }
+  .search-bar button:hover { background: #303f9f; }
+
+  /* ── Table ── */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .data-table th { background: #1a237e; color: #fff; padding: 10px 12px; text-align: left; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  .data-table td { padding: 10px 12px; border-bottom: 1px solid #ffffff08; }
+  .data-table tr:hover { background: #ffffff05; }
+  .data-table .right { text-align: right; }
+  .data-table .center { text-align: center; }
+  .link { color: #80b4ff; cursor: pointer; text-decoration: none; }
+  .link:hover { text-decoration: underline; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; background: #1a237e; color: #f0e68c; }
+
+  /* ── Stats ── */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .stat-card { background: #16213e; border: 1px solid #ffffff10; border-radius: 12px; padding: 16px; text-align: center; }
+  .stat-card .value { font-size: 2rem; font-weight: 700; color: #f0e68c; }
+  .stat-card .label { font-size: 0.8rem; color: #888; margin-top: 4px; }
+
+  /* ── Catalog ── */
+  .sheet-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .sheet-tab { padding: 6px 14px; background: #0f0f1a; border: 1px solid #ffffff15; border-radius: 6px; cursor: pointer; font-size: 0.8rem; color: #aaa; transition: all 0.2s; }
+  .sheet-tab:hover, .sheet-tab.active { background: #1a237e; color: #f0e68c; border-color: #1a237e; }
+
+  /* ── How to Use ── */
+  .howto { line-height: 1.8; }
+  .howto h3 { color: #f0e68c; margin: 16px 0 8px; font-size: 1rem; }
+  .howto code { background: #0f0f1a; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; color: #80b4ff; }
+  .howto ul { margin-left: 20px; }
+  .howto li { margin-bottom: 4px; }
+  .howto .step { background: #0f0f1a; border-left: 3px solid #f0e68c; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 8px 0; }
+
+  /* ── Loading ── */
+  .loading { text-align: center; padding: 40px; color: #666; }
+  .spinner { display: inline-block; width: 24px; height: 24px; border: 2px solid #333; border-top-color: #f0e68c; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { text-align: center; padding: 40px; color: #666; }
+
+  /* ── Footer ── */
+  .footer { text-align: center; padding: 24px; color: #444; font-size: 0.75rem; border-top: 1px solid #ffffff08; margin-top: 40px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .container { padding: 12px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .data-table { font-size: 0.8rem; }
+    .data-table th, .data-table td { padding: 8px 6px; }
+  }
 </style>
 </head>
 <body>
-<div class="card">
-  <h1>Nasri Butler</h1>
-  <div class="sub">Enervia Group AI Office</div>
-  <p>At your service, sir.</p>
-  <div class="status">
-    <span class="dot"></span> LINE Bot Online
+
+<!-- Nav -->
+<div class="nav">
+  <div class="nav-brand">
+    <div>
+      <h1>Nasri AI Office</h1>
+      <div class="sub">Enervia Group Co.,Ltd.</div>
+    </div>
   </div>
-  <p style="margin-top:16px; font-size: 0.8rem; color: #666;">
-    Powered by Oracle &bull; <a href="/health">Health Check</a>
-  </p>
+  <div class="nav-status">
+    <span class="dot"></span> Online
+    <a href="/health" class="link" style="margin-left:12px; font-size:0.8rem;">Health</a>
+  </div>
 </div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" data-tab="bom">BOM List</div>
+  <div class="tab" data-tab="catalog">Catalog</div>
+  <div class="tab" data-tab="howto">How to Use</div>
+</div>
+
+<!-- Content -->
+<div class="container">
+
+  <!-- ── BOM Panel ── -->
+  <div id="panel-bom" class="panel active">
+    <div id="bom-stats" class="stats"></div>
+    <div class="search-bar">
+      <input type="text" id="bom-search" placeholder="Search BOMs by name...">
+      <button onclick="searchBoms()">Search</button>
+    </div>
+    <div class="card">
+      <div id="bom-list"><div class="loading"><span class="spinner"></span> Loading BOMs...</div></div>
+    </div>
+  </div>
+
+  <!-- ── Catalog Panel ── -->
+  <div id="panel-catalog" class="panel">
+    <div class="search-bar">
+      <input type="text" id="catalog-search" placeholder="Search products... e.g. JA Solar, ATMOCE, MI-500">
+      <button onclick="searchCatalog()">Search</button>
+    </div>
+    <div id="catalog-sheets" class="sheet-tabs"></div>
+    <div class="card">
+      <div id="catalog-list"><div class="loading"><span class="spinner"></span> Loading catalog...</div></div>
+    </div>
+  </div>
+
+  <!-- ── How to Use Panel ── -->
+  <div id="panel-howto" class="panel">
+    <div class="card howto">
+      <h2>How to Add Nasri to Your LINE Group</h2>
+
+      <div class="step">
+        <strong>Step 1:</strong> Add <code>@nasri-butler</code> as friend on LINE<br>
+        Or scan QR Code from the Enervia LINE OA page
+      </div>
+      <div class="step">
+        <strong>Step 2:</strong> Invite Nasri to your group chat<br>
+        Open group settings &rarr; Invite members &rarr; Search "Nasri"
+      </div>
+      <div class="step">
+        <strong>Step 3:</strong> Call Nasri by name!<br>
+        Type <code>nasri</code>, <code>นัด</code>, or <code>ไอ่นัด</code> to wake him up
+      </div>
+
+      <h3>Commands</h3>
+      <ul>
+        <li><code>นัด ช่วย</code> — Show help menu</li>
+        <li><code>นัด ขอ bom</code> — Start creating a BOM</li>
+        <li><code>นัด atmoce 5kw 1phase แผง JA625 + batt</code> — Auto-build BOM from spec</li>
+        <li><code>ขอ pdf</code> / <code>สร้าง pdf</code> — Generate PDF from last BOM</li>
+        <li><code>นัด ค้นหา ชื่อ</code> — Search old BOMs</li>
+        <li><code>นัด โหลด ชื่อ</code> — Load an old BOM for editing</li>
+      </ul>
+
+      <h3>Smart BOM Examples</h3>
+      <ul>
+        <li><code>นัด atmoce 5kw 1phase แผง JA625 + batt + backup</code></li>
+        <li><code>นัด huawei 10kw 3phase แผง trina</code></li>
+        <li><code>นัด sigenergy 8kw 1phase + batt + ev charger</code></li>
+        <li><code>นัด deye 5kw แผง aiko 650</code></li>
+      </ul>
+
+      <h3>Manual Item Format</h3>
+      <ul>
+        <li><code>Product Name, Quantity, Price</code></li>
+        <li><code>Product Name, Brand, Quantity, Price</code></li>
+        <li><code>Trina 625, 8</code> — Lookup from catalog</li>
+      </ul>
+
+      <h3>During BOM Session</h3>
+      <ul>
+        <li><code>เสร็จ</code> — Finish and save</li>
+        <li><code>ลบ</code> — Remove last item</li>
+        <li><code>ยกเลิก</code> — Cancel BOM</li>
+        <li><code>แก้ไข</code> — Re-enter edit mode</li>
+        <li><code>ชื่อ xxx</code> — Set project name</li>
+      </ul>
+
+      <h3>Cost Calculation</h3>
+      <ul>
+        <li>Labor: 4.5 Baht/Wp</li>
+        <li>BOS: 0.7 Baht/Wp</li>
+        <li>Error Cost: 1.0 Baht/Wp</li>
+        <li>VAT: 7% (equipment only)</li>
+        <li>Crane: 15,000 (systems &ge; 30kW)</li>
+        <li>PEA/MEA: tiered by system size</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  Enervia Group Co.,Ltd. &bull; Powered by Nasri Oracle &bull; ai.enervia.co.th
+</div>
+
+<script>
+// ── Tab switching ──
+document.querySelectorAll('.tab').forEach(function(tab) {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.panel').forEach(function(p) { p.classList.remove('active'); });
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+
+    // Lazy-load catalog
+    if (tab.dataset.tab === 'catalog' && !catalogLoaded) loadCatalogSheets();
+  });
+});
+
+// ── Helpers ──
+function fmt(n) {
+  return (n || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+// ── BOM List ──
+function loadBoms(query) {
+  var url = '/api/bom-list' + (query ? '?q=' + encodeURIComponent(query) : '');
+  fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+    var boms = data.boms || [];
+    var el = document.getElementById('bom-list');
+    var statsEl = document.getElementById('bom-stats');
+
+    // Stats
+    var totalCost = 0;
+    boms.forEach(function(b) { totalCost += b.total_cost || 0; });
+    statsEl.innerHTML =
+      '<div class="stat-card"><div class="value">' + boms.length + '</div><div class="label">Total BOMs</div></div>' +
+      '<div class="stat-card"><div class="value">' + fmt(totalCost) + '</div><div class="label">Total Value (Baht)</div></div>' +
+      '<div class="stat-card"><div class="value">' + (boms.length > 0 ? (boms[0].updated || boms[0].created || '').slice(0,10) : '-') + '</div><div class="label">Last Updated</div></div>';
+
+    if (!boms.length) {
+      el.innerHTML = '<div class="empty">No BOMs found</div>';
+      return;
+    }
+
+    var html = '<table class="data-table"><thead><tr>' +
+      '<th>#</th><th>Project</th><th class="center">Items</th><th class="right">Total (Baht)</th><th>Created</th><th>Updated</th><th></th>' +
+      '</tr></thead><tbody>';
+
+    boms.forEach(function(b, i) {
+      var htmlFn = b.filename.replace('.json', '.html');
+      var viewUrl = '/api/bom-view/' + encodeURIComponent(htmlFn);
+      html += '<tr>' +
+        '<td class="center">' + (i + 1) + '</td>' +
+        '<td><strong>' + (b.project_name || 'Unnamed') + '</strong>' + (b.project_address ? '<br><span style="color:#666;font-size:0.8rem;">' + b.project_address + '</span>' : '') + '</td>' +
+        '<td class="center"><span class="badge">' + (b.item_count || 0) + '</span></td>' +
+        '<td class="right" style="color:#f0e68c;font-weight:600;">' + fmt(b.total_cost) + '</td>' +
+        '<td style="color:#888;font-size:0.8rem;">' + (b.created || '').slice(0, 10) + '</td>' +
+        '<td style="color:#888;font-size:0.8rem;">' + (b.updated || '').slice(0, 10) + '</td>' +
+        '<td><a href="' + viewUrl + '" target="_blank" class="link">View</a></td>' +
+        '</tr>';
+    });
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  }).catch(function(e) {
+    document.getElementById('bom-list').innerHTML = '<div class="empty">Error loading BOMs: ' + e.message + '</div>';
+  });
+}
+
+function searchBoms() {
+  var q = document.getElementById('bom-search').value.trim();
+  loadBoms(q);
+}
+
+document.getElementById('bom-search').addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') searchBoms();
+});
+
+// Load BOMs on page load
+loadBoms();
+
+// ── Catalog ──
+var catalogLoaded = false;
+var catalogSheets = [];
+
+function loadCatalogSheets() {
+  catalogLoaded = true;
+  fetch('/api/catalog').then(function(r) { return r.json(); }).then(function(data) {
+    catalogSheets = data.sheets || [];
+    var tabsEl = document.getElementById('catalog-sheets');
+    var html = '';
+    catalogSheets.forEach(function(s) {
+      html += '<div class="sheet-tab" data-sheet="' + s.name + '">' + s.name + ' (' + s.count + ')</div>';
+    });
+    tabsEl.innerHTML = html;
+
+    // Click handlers
+    tabsEl.querySelectorAll('.sheet-tab').forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        tabsEl.querySelectorAll('.sheet-tab').forEach(function(t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        loadSheet(tab.dataset.sheet);
+      });
+    });
+
+    document.getElementById('catalog-list').innerHTML = '<div class="empty">Select a sheet or search for products</div>';
+  }).catch(function(e) {
+    document.getElementById('catalog-list').innerHTML = '<div class="empty">Error: ' + e.message + '</div>';
+  });
+}
+
+function loadSheet(name) {
+  document.getElementById('catalog-list').innerHTML = '<div class="loading"><span class="spinner"></span> Loading...</div>';
+  fetch('/api/catalog?sheet=' + encodeURIComponent(name)).then(function(r) { return r.json(); }).then(function(data) {
+    renderCatalogRows(data.rows || [], name);
+  });
+}
+
+function searchCatalog() {
+  var q = document.getElementById('catalog-search').value.trim();
+  if (!q) return;
+  document.getElementById('catalog-list').innerHTML = '<div class="loading"><span class="spinner"></span> Searching...</div>';
+  // Deselect sheet tabs
+  document.querySelectorAll('.sheet-tab').forEach(function(t) { t.classList.remove('active'); });
+  fetch('/api/catalog?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(data) {
+    renderCatalogRows(data.matches || [], 'Search: ' + q);
+  });
+}
+
+document.getElementById('catalog-search').addEventListener('keypress', function(e) {
+  if (e.key === 'Enter') searchCatalog();
+});
+
+function renderCatalogRows(rows, title) {
+  var el = document.getElementById('catalog-list');
+  if (!rows.length) { el.innerHTML = '<div class="empty">No products found</div>'; return; }
+
+  // Get all unique keys
+  var allKeys = {};
+  rows.forEach(function(r) { Object.keys(r).forEach(function(k) { if (k !== '_sheet') allKeys[k] = true; }); });
+  var keys = Object.keys(allKeys).slice(0, 8); // Max 8 columns
+
+  var html = '<h2 style="margin-bottom:12px">' + title + ' (' + rows.length + ' items)</h2>';
+  html += '<div style="overflow-x:auto"><table class="data-table"><thead><tr>';
+  if (rows[0]._sheet) html += '<th>Sheet</th>';
+  keys.forEach(function(k) { html += '<th>' + k + '</th>'; });
+  html += '</tr></thead><tbody>';
+
+  rows.slice(0, 100).forEach(function(r) {
+    html += '<tr>';
+    if (r._sheet) html += '<td><span class="badge">' + r._sheet + '</span></td>';
+    keys.forEach(function(k) {
+      var v = r[k] || '';
+      // Highlight price columns
+      if (k.indexOf('ราคา') >= 0 || k.indexOf('฿') >= 0) {
+        html += '<td class="right" style="color:#f0e68c">' + v + '</td>';
+      } else {
+        html += '<td>' + v + '</td>';
+      }
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table></div>';
+  if (rows.length > 100) html += '<div style="color:#666;text-align:center;margin-top:8px;">Showing 100 of ' + rows.length + '</div>';
+  el.innerHTML = html;
+}
+</script>
 </body>
 </html>

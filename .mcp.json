@@ -1,0 +1,64 @@
+{
+  "mcpServers": {
+    "pdf-reader": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@sylphlab/pdf-reader-mcp"]
+    },
+    "pdf-generator": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@mcp-z/mcp-pdf"]
+    },
+    "oracle-v2": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "run",
+        "--cwd",
+        "C:/Users/pO-Ch/Nasri-oracle/oracle-v2",
+        "dev"
+      ],
+      "env": {
+        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+      }
+    },
+    "bomsolar": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["C:/Users/pO-Ch/Nasri-oracle/mcp-bomsolar/server.py"],
+      "env": {
+        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+      }
+    },
+    "engineer": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "run",
+        "--cwd",
+        "C:/Users/pO-Ch/Nasri-oracle/mcp-engineer",
+        "dev"
+      ],
+      "env": {
+        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+      }
+    },
+    "pricesolar": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["C:/Users/pO-Ch/Nasri-oracle/mcp-pricesolar/server.py"],
+      "env": {
+        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+      }
+    },
+    "qsolar": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["C:/Users/pO-Ch/Nasri-oracle/mcp-qsolar/server.py"],
+      "env": {
+        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+      }
+    }
+  }
+}

@@ -64,54 +64,57 @@ async function processEvents(events: LineEvent[]): Promise<void> {
   }
 }
 
-/** Handle a text message — check for "nasri" trigger or active BOM session. */
+/** Handle a text message — check for triggers or active BOM session. */
 async function handleTextMessage(event: LineEvent): Promise<void> {
   const text = event.message?.text?.trim() ?? "";
   const lower = text.toLowerCase();
   const replyToken = event.replyToken;
   if (!replyToken) return;
 
-  // If there's an active BOM session, route message to BOM flow first
-  // (unless it's a new "nasri" command)
-  const isNasriCommand = lower.includes("nasri");
-
-  if (!isNasriCommand) {
-    // Try BOM session handler (returns true if session was active and handled)
-    const handled = await handleBomMessage(event);
-    if (handled) return;
-    // No active session and no "nasri" trigger — ignore
+  // Check for "สร้าง pdf" / "create pdf" — works anytime with a saved BOM
+  if ((lower.includes("สร้าง") || lower.includes("create")) && lower.includes("pdf")) {
+    await handleCreatePdf(event);
     return;
   }
 
-  // "nasri" was mentioned — parse intent
+  // Trigger words: "นัด" or "nasri"
+  const isNud = lower.includes("นัด");
+  const isNasri = lower.includes("nasri");
+
+  // If no trigger, try active BOM session
+  if (!isNud && !isNasri) {
+    const handled = await handleBomMessage(event);
+    if (handled) return;
+    return;
+  }
+
   const sourceLabel =
     event.source.type === "group"
       ? `group:${event.source.groupId}`
       : `user:${event.source.userId}`;
   console.log(`[nasri] Triggered by ${sourceLabel}: "${text}"`);
 
-  // BOM creation: "nasri สร้าง BOM" or "nasri create bom"
-  if ((lower.includes("สร้าง") || lower.includes("create")) && lower.includes("bom")) {
-    await handleStartBom(event);
-    return;
-  }
-
-  // Search
-  if (lower.includes("ค้นหา") || lower.includes("search")) {
-    const query = text.replace(/nasri/i, "").replace(/ค้นหา|search/gi, "").trim();
-    await replyText(
-      replyToken,
-      `ค้นหา "${query}" ให้ครับ...\n\n(ฟีเจอร์นี้กำลังพัฒนาครับ)`
-    );
-    return;
-  }
-
-  // Help
+  // Help / menu
   if (lower.includes("ช่วย") || lower.includes("help") || lower.includes("เมนู")) {
     await reply(replyToken, [buildMenuFlex()]);
     return;
   }
 
-  // Default: show menu
-  await reply(replyToken, [buildMenuFlex()]);
+  // Search (future)
+  if (lower.includes("ค้นหา") || lower.includes("search")) {
+    const query = text.replace(/nasri/i, "").replace(/นัด/gi, "").replace(/ค้นหา|search/gi, "").trim();
+    await replyText(replyToken, `ค้นหา "${query}" ให้ครับ...\n\n(ฟีเจอร์นี้กำลังพัฒนาครับ)`);
+    return;
+  }
+
+  // Default: "นัด" or "nasri" → start BOM directly
+  await handleStartBom(event);
+}
+
+/** Handle "สร้าง pdf" / "create pdf" command. */
+async function handleCreatePdf(event: LineEvent): Promise<void> {
+  const replyToken = event.replyToken;
+  if (!replyToken) return;
+  // TODO: integrate with lastBom storage (like production app.js)
+  await replyText(replyToken, "⏳ กำลังสร้าง PDF ครับ...\n(ฟีเจอร์ PDF กำลังพัฒนา)");
 }
