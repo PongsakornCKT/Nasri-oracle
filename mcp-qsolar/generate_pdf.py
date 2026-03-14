@@ -16,11 +16,13 @@ import os
 import random
 
 # ─── Paths ────────────────────────────────────────────────────
-REPO_ROOT = os.environ.get('ORACLE_REPO_ROOT', 'C:/Users/pO-Ch/Nasri-oracle')
-ASSET_DIR = os.path.join(REPO_ROOT, 'tmppic', 'tempagent', 'quotation-solar', 'assets')
-FONT_DIR = os.path.join(ASSET_DIR, 'font')
-PIC_DIR = os.path.join(ASSET_DIR, 'picture ref use')
-OUTPUT_DIR = os.path.join(REPO_ROOT, 'nasri-line-bot', 'deploy', 'boms')
+REPO_ROOT  = os.environ.get('ORACLE_REPO_ROOT', 'C:/Users/pO-Ch/Nasri-oracle')
+_default_asset = os.path.join(REPO_ROOT, 'tmppic', 'tempagent', 'quotation-solar', 'assets')
+ASSET_DIR  = os.environ.get('QSOLAR_ASSET_DIR', _default_asset)
+FONT_DIR   = os.path.join(ASSET_DIR, 'font')
+PIC_DIR    = os.path.join(ASSET_DIR, 'picture ref use')
+_default_out = os.path.join(REPO_ROOT, 'nasri-line-bot', 'deploy', 'boms')
+OUTPUT_DIR = os.environ.get('QSOLAR_OUTPUT_DIR', _default_out)
 
 # ─── Font Registration ────────────────────────────────────────
 _fonts_registered = False
@@ -107,6 +109,10 @@ SELLING_PRICES = {
 
 # ─── Battery Pricing (ATMOCE) ────────────────────────────────
 BATTERY_PRICES = {
+    'batt_unit': 99000,       # MS-7K-U per unit
+    'backup_1P': 11000,       # MU100S
+    'backup_3P': 31000,       # MU100T
+    # Legacy composite keys (for live sheet fallback)
     'batt_only': 99000,
     'batt_backup_1P': 110000,
     'batt_backup_3P': 130000,
@@ -119,6 +125,157 @@ DYNESS_BATTERY_PRICES = {
     'Power Brick SC': 75000, # 10 kWh LV 48V
 }
 DYNESS_DEFAULT_MODEL = 'DL5.0C'
+
+# ─── Battery Brand Compatibility ──────────────────────────────
+BATTERY_BRAND_COMPAT = {
+    "ATMOCE": ["ATMOCE"],
+    "Sigenergy": ["Sigenergy"],
+    "Huawei": ["Huawei"],
+    "Deye": ["Deye", "Dyness"],
+    "Solis": ["Dyness", "Solis"],
+    "Hoymiles": [],
+}
+
+
+def _find_best_battery_from_sheet(brand: str, battery_kwh: float, phase: str = "1P") -> dict | None:
+    """
+    Fetch batteries from Google Sheet and find best model x quantity match.
+    Returns dict: model, brand, kwh_per_unit, quantity, unit_price, total_price, total_kwh, accessories
+    """
+    try:
+        import sheets as sheet_mod
+        all_data = sheet_mod.fetch_all_sheets()
+        batt_rows = all_data.get("Batteries", [])
+    except Exception:
+        return None
+
+    if not batt_rows:
+        return None
+
+    compatible_brands = BATTERY_BRAND_COMPAT.get(brand, [])
+    if not compatible_brands:
+        return None
+
+    def _batt_price(row):
+        for k, v in row.items():
+            if "฿" in k and "ราคาสั่งซื้อ" in k.lower():
+                try:
+                    return float(str(v).replace(",", "").replace("฿", "").strip())
+                except Exception:
+                    pass
+        for k, v in row.items():
+            if len(k) < 30 and "ราคาสั่งซื้อ" in k.lower():
+                try:
+                    return float(str(v).replace(",", "").replace("฿", "").strip())
+                except Exception:
+                    pass
+        for k, v in row.items():
+            if "฿" in k and "ราคา" in k.lower():
+                try:
+                    return float(str(v).replace(",", "").replace("฿", "").strip())
+                except Exception:
+                    pass
+        for k, v in row.items():
+            if len(k) < 30 and "ราคา" in k.lower():
+                try:
+                    return float(str(v).replace(",", "").replace("฿", "").strip())
+                except Exception:
+                    pass
+        return 0
+
+    def _batt_field(row, keys):
+        for k in keys:
+            for col, val in row.items():
+                if k.lower() in col.lower() and str(val).strip():
+                    return str(val).strip()
+        return ""
+
+    candidates = []
+    for r in batt_rows:
+        price = _batt_price(r)
+        if price <= 0:
+            continue
+        brand_col = str(list(r.values())[0]).strip() if r else ""
+        if not any(cb.lower() in brand_col.lower() for cb in compatible_brands):
+            continue
+        kwh_val = None
+        for k, v in r.items():
+            if "kwh" in k.lower() or "ขนาด" in k.lower():
+                try:
+                    kwh_val = float(v)
+                    break
+                except Exception:
+                    pass
+        if not kwh_val or kwh_val <= 0:
+            continue
+        # Skip controller/accessory rows
+        vals_str = " ".join(str(v) for v in r.values()).lower()
+        if "controller" in vals_str:
+            continue
+        model = _batt_field(r, ["รุ่น", "model"]) or "Battery"
+        candidates.append({"model": model, "brand": brand_col, "kwh_per_unit": kwh_val, "unit_price": price})
+
+    if not candidates:
+        return None
+
+    if not battery_kwh or battery_kwh <= 0:
+        best = min(candidates, key=lambda c: c["kwh_per_unit"])
+        return {**best, "quantity": 1, "total_price": best["unit_price"], "total_kwh": best["kwh_per_unit"], "accessories": []}
+
+    # Prefer LARGER batteries — among combos within 2kWh of best diff,
+    # pick the one with largest kwh_per_unit (fewer units, simpler install)
+    combos = []
+    for c in candidates:
+        kwh = c["kwh_per_unit"]
+        raw_qty = battery_kwh / kwh
+        qty_low = max(1, int(raw_qty))
+        qty_high = qty_low + 1
+        diff_low = abs(qty_low * kwh - battery_kwh)
+        diff_high = abs(qty_high * kwh - battery_kwh)
+        qty = qty_low if diff_low <= diff_high else qty_high
+        total_kwh = kwh * qty
+        diff = abs(total_kwh - battery_kwh)
+        combos.append({**c, "quantity": qty, "total_price": c["unit_price"] * qty, "total_kwh": total_kwh, "_diff": diff})
+
+    if not combos:
+        return None
+
+    best_diff = min(cb["_diff"] for cb in combos)
+    tolerance = max(2, battery_kwh * 0.2)
+    near_best = [cb for cb in combos if cb["_diff"] <= best_diff + tolerance]
+    near_best.sort(key=lambda cb: cb["kwh_per_unit"], reverse=True)
+    winner = near_best[0]
+    del winner["_diff"]
+
+    # ── Brand-specific post-processing ──
+
+    # Huawei: mandatory Controller accessory
+    if brand == "Huawei":
+        controller = None
+        for r in batt_rows:
+            vals = " ".join(str(v) for v in r.values()).lower()
+            if "controller" in vals and "huawei" in vals:
+                controller = r
+                break
+        if controller:
+            cp = _batt_price(controller)
+            cm = _batt_field(controller, ["รุ่น", "model"]) or "LUNA2000-10kW-C1"
+            winner["accessories"] = [{
+                "model": cm, "brand": "Huawei", "unit_price": cp,
+                "quantity": 1, "total_price": cp, "notes": "Mandatory Controller"
+            }]
+
+    # ATMOCE: cap at 3 units for 1P
+    if brand == "ATMOCE" and phase == "1P" and winner.get("quantity", 0) > 3:
+        winner["quantity"] = 3
+        winner["total_kwh"] = winner["kwh_per_unit"] * 3
+        winner["total_price"] = winner["unit_price"] * 3
+
+    if "accessories" not in winner:
+        winner["accessories"] = []
+
+    return winner
+
 
 # ─── Huawei/Solis inverter model lookup ──────────────────────
 HUAWEI_MODELS = {
@@ -142,8 +299,17 @@ HOYMILES_MODELS = {
 }
 
 # ─── Image Sets ───────────────────────────────────────────────
+_PIC_ALIASES = {
+    'ตัวอย่างการติดตั้งบนหลังคา.jpg': 'roof_install.jpg',
+    'BBL.jfif': 'BBL.jpg',
+    'SCB.jfif': 'SCB.jpg',
+}
+
 def _pic(name):
-    return os.path.join(PIC_DIR, name)
+    p = os.path.join(PIC_DIR, name)
+    if not os.path.exists(p) and name in _PIC_ALIASES:
+        p = os.path.join(PIC_DIR, _PIC_ALIASES[name])
+    return p
 
 ATMOCE_IMAGES = {
     '1P_onGrid':    [_pic('1Phase-Atmoce.jpg'),                    _pic('Atmoce 1 phase.jpg'),                          _pic('ตัวอย่างการติดตั้งบนหลังคา.jpg')],
@@ -275,20 +441,35 @@ def _atmoce_install_lines(panels: int, phase: str, size_kw: float,
     return lines
 
 
-def _atmoce_battery_lines(phase: str, has_backup: bool) -> list:
-    if phase == '1P':
-        backup_box = 'ตู้ ATMOCE M-Backup box 1P 1ชุด Switches to battery power in milliseconds (<10ms)'
-    else:
-        backup_box = 'ตู้ ATMOCE M-Backup box 3P 1ชุด Switches to battery power in milliseconds (<10ms)'
+def _atmoce_battery_lines(phase: str, has_backup: bool, batt_qty: int = 1) -> list:
+    """Generate ATMOCE battery PDF line items."""
+    phase_text = 'Single-phase' if phase == '1P' else 'Three-phase'
+    qty_text = f' จำนวน {batt_qty} เครื่อง' if batt_qty > 1 else ''
 
-    lines = [
-        (FB, 13, 'MS-7K (ESS Kit)' + (' + พร้อมระบบสำรองไฟ (Backup System)' if has_backup else '')),
-        (F, 11, '1. 7kw. Extra lowV Energy Storage System'),
-        (F, 11, 'แบตเตอรี่ลิเธียมฟอสเฟต (LFP) แรงดันต่ำ (Extra Low Voltage หรือ ELV) ความ'),
-        (F, 11, 'ปลอดภัยสูง อายุการใช้งาน 10,000 รอบการชาร์จ รับประกัน 10 ปี'),
-    ]
     if has_backup:
-        lines.append((F, 11, f'2. {backup_box}'))
+        backup_model = 'MU100S' if phase == '1P' else 'MU100T'
+        backup_phase = '1' if phase == '1P' else '3'
+        title = f'MS-7K (ESS) + พร้อมระบบสำรองไฟ (Backup System) {phase_text}'
+        lines = [
+            (FB, 13, title),
+            (F, 11, f'1. 7kw. Extra low voltage [ELV] Energy Storage System ({phase_text}){qty_text}'),
+            (F, 11, 'BATTERY ENERGY STORAGE SYSTEM : MS-7K-U (ประกัน 10 ปี)'),
+            (F, 11, 'แบตเตอรี่ลิเธียมฟอสเฟต (LFP) แรงดันต่ำ (Extra Low Voltage หรือ ELV)'),
+            (F, 11, 'ความปลอดภัยสูง อายุการใช้งาน 10,000 รอบการชาร์จ'),
+            (F, 11, f'2. ตู้ ATMOCE M-Backup Box {phase}P ({backup_model})'),
+            (F, 11, f'สำหรับระบบไฟฟ้า {backup_phase} เฟส 1 ชุด'),
+            (F, 11, 'Switches to battery power in milliseconds (<10ms)'),
+            (F, 11, '- พร้อมระบบ AC Coupling'),
+        ]
+    else:
+        title = 'MS-7K (ESS Kit)'
+        lines = [
+            (FB, 13, title),
+            (F, 11, f'1. 7kw. Extra lowV Energy Storage System{qty_text}'),
+            (F, 11, 'แบตเตอรี่ลิเธียมฟอสเฟต (LFP) แรงดันต่ำ (Extra Low Voltage หรือ ELV)'),
+            (F, 11, 'ความปลอดภัยสูง อายุการใช้งาน 10,000 รอบการชาร์จ'),
+            (F, 11, 'รับประกัน 10 ปี'),
+        ]
     return lines
 
 
@@ -546,29 +727,39 @@ class QuotationGenerator:
         return output_path
 
     # ──────────────────────────────────────────────────────────
-    def _calc_grand_total(self, brand, phase, size_kw, has_battery, has_backup, battery_model=''):
+    def _calc_grand_total(self, brand, phase, size_kw, has_battery, has_backup, battery_model='', **kwargs):
         base = get_selling_price(brand, phase, size_kw)
         if brand == 'ATMOCE' and has_battery:
-            # Try live battery price from sheet, fall back to hardcoded
-            try:
-                _, live_batt = _get_live_prices()
-                if live_batt:
-                    if has_backup:
-                        key = 'batt_backup_3P' if phase == '3P' else 'batt_backup_1P'
-                    else:
-                        key = 'batt_only'
-                    batt_price = live_batt.get(key, BATTERY_PRICES[key])
-                else:
-                    raise ValueError('empty')
-            except Exception:
-                if has_backup:
-                    batt_price = BATTERY_PRICES['batt_backup_3P' if phase == '3P' else 'batt_backup_1P']
-                else:
-                    batt_price = BATTERY_PRICES['batt_only']
+            # Calculate battery qty from battery_kwh (7kWh per unit)
+            battery_kwh = kwargs.get('battery_kwh', 0)
+            batt_qty = max(1, round(battery_kwh / 7)) if battery_kwh > 0 else 1
+            if phase == '1P':
+                batt_qty = min(batt_qty, 3)  # 1P max 3 batteries (21kWh)
+            # Price = 99,000 per unit + backup box if needed
+            batt_price = BATTERY_PRICES['batt_unit'] * batt_qty
+            if has_backup:
+                batt_price += BATTERY_PRICES['backup_3P' if phase == '3P' else 'backup_1P']
             base += batt_price
         elif brand in ('Deye', 'Solis') and has_battery:
-            bm = battery_model or DYNESS_DEFAULT_MODEL
-            base += float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+            battery_kwh = kwargs.get('battery_kwh', 0)
+            if battery_kwh > 0:
+                batt_info = _find_best_battery_from_sheet(brand, battery_kwh, phase=phase)
+                if batt_info:
+                    base += batt_info['total_price']
+                else:
+                    bm = battery_model or DYNESS_DEFAULT_MODEL
+                    base += float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+            else:
+                bm = battery_model or DYNESS_DEFAULT_MODEL
+                base += float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+        elif brand in ('Huawei', 'Sigenergy') and has_battery:
+            battery_kwh = kwargs.get('battery_kwh', 0)
+            batt_info = _find_best_battery_from_sheet(brand, battery_kwh, phase=phase) if battery_kwh > 0 else _find_best_battery_from_sheet(brand, 0, phase=phase)
+            if batt_info:
+                base += batt_info['total_price']
+                # Add accessories (e.g. Huawei Controller)
+                for acc in batt_info.get('accessories', []):
+                    base += acc['total_price']
         return float(base)
 
     def _gen_quote_number(self) -> str:
@@ -809,17 +1000,28 @@ class QuotationGenerator:
         batt_price = 0.0
 
         if brand == 'ATMOCE' and has_battery:
-            try:
-                _, live_batt = _get_live_prices()
-                key = ('batt_backup_3P' if phase == '3P' else 'batt_backup_1P') if has_backup else 'batt_only'
-                batt_price = float(live_batt.get(key, BATTERY_PRICES[key]) if live_batt else BATTERY_PRICES[key])
-            except Exception:
-                key = ('batt_backup_3P' if phase == '3P' else 'batt_backup_1P') if has_backup else 'batt_only'
-                batt_price = float(BATTERY_PRICES[key])
+            battery_kwh = data.get('battery_kwh', 0) if data else 0
+            batt_qty = max(1, round(battery_kwh / 7)) if battery_kwh > 0 else 1
+            batt_price = BATTERY_PRICES['batt_unit'] * batt_qty
+            if has_backup:
+                batt_price += BATTERY_PRICES['backup_3P' if phase == '3P' else 'backup_1P']
             install_price = grand_total - batt_price
         elif brand in ('Deye', 'Solis') and has_battery:
-            bm = (data.get('battery_model', '') if data else '') or DYNESS_DEFAULT_MODEL
-            batt_price = float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+            battery_kwh = data.get('battery_kwh', 0) if data else 0
+            batt_info = _find_best_battery_from_sheet(brand, battery_kwh, phase=phase) if battery_kwh > 0 else None
+            if batt_info:
+                batt_price = batt_info['total_price']
+            else:
+                bm = (data.get('battery_model', '') if data else '') or DYNESS_DEFAULT_MODEL
+                batt_price = float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+            install_price = grand_total - batt_price
+        elif brand in ('Huawei', 'Sigenergy') and has_battery:
+            battery_kwh = data.get('battery_kwh', 0) if data else 0
+            batt_info = _find_best_battery_from_sheet(brand, battery_kwh, phase=phase) if battery_kwh > 0 else _find_best_battery_from_sheet(brand, 0, phase=phase)
+            if batt_info:
+                batt_price = batt_info['total_price']
+                for acc in batt_info.get('accessories', []):
+                    batt_price += acc['total_price']
             install_price = grand_total - batt_price
 
         panel_brand = data.get('panel_brand', 'JA Solar') if data else 'JA Solar'
@@ -830,7 +1032,11 @@ class QuotationGenerator:
             items.append((1, lines1, install_price, install_price))
 
             if has_battery:
-                lines2 = _atmoce_battery_lines(phase, has_backup)
+                battery_kwh = data.get('battery_kwh', 0) if data else 0
+                batt_qty = max(1, round(battery_kwh / 7)) if battery_kwh > 0 else 1
+                if phase == '1P':
+                    batt_qty = min(batt_qty, 3)  # 1P max 3 batteries
+                lines2 = _atmoce_battery_lines(phase, has_backup, batt_qty)
                 items.append((2, lines2, batt_price, batt_price))
                 warranty_num = 3
                 terms_num = 4
@@ -841,18 +1047,88 @@ class QuotationGenerator:
         elif brand == 'Sigenergy':
             lines1 = _sigenergy_install_lines(panels, phase, size_kw)
             items.append((1, lines1, install_price, install_price))
-            warranty_num = 2
-            terms_num = 3
+            if has_battery:
+                battery_kwh = data.get('battery_kwh', 0) if data else 0
+                batt_info = _find_best_battery_from_sheet(brand, battery_kwh, phase=phase) if battery_kwh > 0 else None
+                if batt_info:
+                    bm = batt_info['model']
+                    batt_qty = batt_info['quantity']
+                    batt_kwh_per = batt_info['kwh_per_unit']
+                    batt_brand = batt_info['brand']
+                    batt_add = batt_info['total_price']
+                    lines_batt = [
+                        (FB, 13, f'{batt_brand} {bm} (ESS Battery)'),
+                        (F, 11, f'1. แบตเตอรี่ {batt_brand} {bm} ความจุ {batt_kwh_per} kWh'),
+                        (F, 11, 'แบตเตอรี่ลิเธียมฟอสเฟต (LFP) คุณภาพสูง'),
+                        (F, 11, 'รับประกัน 10 ปี'),
+                    ]
+                    if batt_qty > 1:
+                        lines_batt.insert(1, (F, 11, f'   จำนวน {batt_qty} ชุด รวม {batt_info["total_kwh"]:.1f} kWh'))
+                    items.append((2, lines_batt, batt_add, batt_add))
+                warranty_num = 3
+                terms_num = 4
+            else:
+                warranty_num = 2
+                terms_num = 3
 
-        elif brand in ('Huawei', 'Solis'):
-            model_table = HUAWEI_MODELS if brand == 'Huawei' else SOLIS_MODELS
-            model = model_table.get(phase, {}).get(int(size_kw), f'{brand} {size_kw:.4g}kW')
+        elif brand == 'Huawei':
+            model = HUAWEI_MODELS.get(phase, {}).get(int(size_kw), f'Huawei {size_kw:.4g}kW')
             lines1 = _string_inverter_install_lines(brand, panels, phase, size_kw, model)
             items.append((1, lines1, install_price, install_price))
             if has_battery:
-                bm = (data.get('battery_model', '') if data else '') or DYNESS_DEFAULT_MODEL
-                lines_batt = _dyness_battery_lines(bm)
-                batt_add = float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+                battery_kwh = data.get('battery_kwh', 0) if data else 0
+                batt_info = _find_best_battery_from_sheet(brand, battery_kwh, phase=phase) if battery_kwh > 0 else None
+                if batt_info:
+                    bm = batt_info['model']
+                    batt_qty = batt_info['quantity']
+                    batt_kwh_per = batt_info['kwh_per_unit']
+                    batt_brand = batt_info['brand']
+                    batt_add = batt_info['total_price']
+                    lines_batt = [
+                        (FB, 13, f'{batt_brand} {bm} (ESS Battery)'),
+                        (F, 11, f'1. แบตเตอรี่ {batt_brand} {bm} ความจุ {batt_kwh_per} kWh'),
+                        (F, 11, 'แบตเตอรี่ลิเธียมฟอสเฟต (LFP) คุณภาพสูง'),
+                        (F, 11, f'รับประกัน 10 ปี'),
+                    ]
+                    if batt_qty > 1:
+                        lines_batt.insert(1, (F, 11, f'   จำนวน {batt_qty} ชุด รวม {batt_info["total_kwh"]:.1f} kWh'))
+                    # Add accessories lines (e.g. mandatory Controller)
+                    for acc in batt_info.get('accessories', []):
+                        batt_add += acc['total_price']
+                        lines_batt.append((F, 11, f'2. {acc["model"]} ({acc["notes"]})'))
+                    items.append((2, lines_batt, batt_add, batt_add))
+                warranty_num = 3
+                terms_num = 4
+            else:
+                warranty_num = 2
+                terms_num = 3
+
+        elif brand == 'Solis':
+            model = SOLIS_MODELS.get(phase, {}).get(int(size_kw), f'Solis {size_kw:.4g}kW')
+            lines1 = _string_inverter_install_lines(brand, panels, phase, size_kw, model)
+            items.append((1, lines1, install_price, install_price))
+            if has_battery:
+                battery_kwh = data.get('battery_kwh', 0) if data else 0
+                batt_info = _find_best_battery_from_sheet(brand, battery_kwh, phase=phase) if battery_kwh > 0 else None
+                if batt_info:
+                    bm = batt_info['model']
+                    batt_qty = batt_info['quantity']
+                    batt_kwh_per = batt_info['kwh_per_unit']
+                    batt_brand = batt_info['brand']
+                    batt_add = batt_info['total_price']
+                    lines_batt = [
+                        (FB, 13, f'{batt_brand} {bm} (ESS Battery)'),
+                        (F, 11, f'1. แบตเตอรี่ {batt_brand} {bm} ความจุ {batt_kwh_per} kWh'),
+                        (F, 11, 'แบตเตอรี่ลิเธียมฟอสเฟต (LFP) คุณภาพสูง ความปลอดภัยสูง'),
+                        (F, 11, 'อายุการใช้งาน 6,000+ รอบการชาร์จ รับประกัน 5 ปี'),
+                    ]
+                    if batt_qty > 1:
+                        lines_batt.insert(1, (F, 11, f'   จำนวน {batt_qty} ชุด รวม {batt_info["total_kwh"]:.1f} kWh'))
+                else:
+                    bm = (data.get('battery_model', '') if data else '') or DYNESS_DEFAULT_MODEL
+                    lines_batt = _dyness_battery_lines(bm)
+                    batt_add = float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+                    batt_qty = 1
                 items.append((2, lines_batt, batt_add, batt_add))
                 warranty_num = 3
                 terms_num = 4
@@ -865,9 +1141,27 @@ class QuotationGenerator:
             lines1 = _deye_install_lines(panels, phase, size_kw, model, has_battery)
             items.append((1, lines1, install_price, install_price))
             if has_battery:
-                bm = (data.get('battery_model', '') if data else '') or DYNESS_DEFAULT_MODEL
-                lines_batt = _dyness_battery_lines(bm)
-                batt_add = float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+                battery_kwh = data.get('battery_kwh', 0) if data else 0
+                batt_info = _find_best_battery_from_sheet(brand, battery_kwh, phase=phase) if battery_kwh > 0 else None
+                if batt_info:
+                    bm = batt_info['model']
+                    batt_qty = batt_info['quantity']
+                    batt_kwh_per = batt_info['kwh_per_unit']
+                    batt_brand = batt_info['brand']
+                    batt_add = batt_info['total_price']
+                    lines_batt = [
+                        (FB, 13, f'{batt_brand} {bm} (ESS Battery)'),
+                        (F, 11, f'1. แบตเตอรี่ {batt_brand} {bm} ความจุ {batt_kwh_per} kWh'),
+                        (F, 11, 'แบตเตอรี่ลิเธียมฟอสเฟต (LFP) คุณภาพสูง ความปลอดภัยสูง'),
+                        (F, 11, 'อายุการใช้งาน 6,000+ รอบการชาร์จ รับประกัน 5 ปี'),
+                    ]
+                    if batt_qty > 1:
+                        lines_batt.insert(1, (F, 11, f'   จำนวน {batt_qty} ชุด รวม {batt_info["total_kwh"]:.1f} kWh'))
+                else:
+                    bm = (data.get('battery_model', '') if data else '') or DYNESS_DEFAULT_MODEL
+                    lines_batt = _dyness_battery_lines(bm)
+                    batt_add = float(DYNESS_BATTERY_PRICES.get(bm, DYNESS_BATTERY_PRICES[DYNESS_DEFAULT_MODEL]))
+                    batt_qty = 1
                 items.append((2, lines_batt, batt_add, batt_add))
                 warranty_num = 3
                 terms_num = 4

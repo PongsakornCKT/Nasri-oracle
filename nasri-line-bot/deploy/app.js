@@ -298,8 +298,8 @@ function askClaude(question, catalogContext) {
     var userContent = question + (catalogContext ? '\n\n' + catalogContext : '');
     var body = JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 500,
-      system: 'คุณคือ Nasri ผู้ช่วยส่วนตัวของ Enervia Group ผู้เชี่ยวชาญด้านพลังงานโซลาร์เซลล์ ตอบเป็นภาษาไทยสั้นกระชับ ตรงประเด็น ไม่เกิน 3-4 ประโยค เว้นแต่จำเป็นต้องอธิบายมากกว่านั้น ถ้ามีข้อมูลราคาจาก catalog ให้ใช้ราคาจริงนั้นในการตอบ',
+      max_tokens: 800,
+      system: 'คุณคือ "นัด" (Nasri) ผู้ช่วยดิจิทัลของ Enervia Group เชี่ยวชาญโซลาร์เซลล์ พูดเป็นกันเอง ใช้ emoji ได้ ตอบสั้น 2-4 ประโยค สำคัญ: อ่านข้อความให้ครบก่อนตอบ วิเคราะห์ความต้องการหลัก ยี่ห้อที่รองรับ: ATMOCE, Sigenergy, Huawei, Deye, Solis, Hoymiles ถ้าผู้ใช้ต้องการ BOM/ใบเสนอราคา แต่ไม่ระบุรายละเอียด ให้ถามก่อน: 1.ยี่ห้อ 2.ขนาดkW 3.กี่เฟส 4.ใส่แบตมั้ย 5.หลังคาแบบไหน 6.กันนกมั้ย ถ้าระบุครบ แนะนำพิมพ์ "นัด ทำใบเสนอราคา [ยี่ห้อ] [ขนาด]kw [เฟส] [แบท]" กฎสำคัญ: Solis/Huawei/Deye hybrid ต้องมีตู้ Combiner+ATS(1P=9500,3P=15850) ATMOCE ใช้ MI-500 สำหรับบ้าน MI-1250 สำหรับ C&I Hoymiles ต้องมี DTU+meter ถ้าไม่รู้คำตอบ ให้ตอบ "ขอไปหาข้อมูลในเวปก่อนนะ 🔍" ห้ามแต่งราคาเอง ใช้ราคาจาก catalog เท่านั้น',
       messages: [{ role: 'user', content: userContent }],
     });
 
@@ -360,7 +360,7 @@ function menuFlex() {
       type: 'bubble',
       header: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: '🏠 Nasri Butler', weight: 'bold', size: 'lg', color: '#1a1a2e' }], backgroundColor: '#f0e68c', paddingAll: '16px' },
       body: { type: 'box', layout: 'vertical', contents: [
-        { type: 'text', text: 'สวัสดีครับ ผม Nasri ยินดีให้บริการครับ', wrap: true, size: 'sm' },
+        { type: 'text', text: 'ว่าไงวัยรุ่น 😎 นัดพร้อมจัดการให้เลย', wrap: true, size: 'sm' },
         { type: 'separator', margin: 'md' },
         { type: 'text', text: 'สั่งงานได้เลยครับ:', margin: 'md', size: 'sm', weight: 'bold' },
         { type: 'text', text: '• "นัด ขอ bom" — สร้าง BOM', margin: 'sm', size: 'sm', wrap: true },
@@ -426,12 +426,121 @@ function guessCat(n) {
   const l = n.toLowerCase();
   if (/panel|module|โมดูล|แผง/.test(l)) return 'โมดูล';
   if (/inverter|อินเวอร์เตอร์|micro/i.test(l)) return 'อินเวอร์เตอร์';
-  if (/batt|แบต/i.test(l)) return 'battery';
+  if (/batt|แบต|แบท/i.test(l)) return 'battery';
   if (/cable|สาย|wire/i.test(l)) return 'cable';
   if (/mount|clamp|rail|ราง/i.test(l)) return 'mounting';
   if (/backup|combiner/i.test(l)) return 'general';
   if (/charger|ev/i.test(l)) return 'EV charger';
   return 'general';
+}
+
+// ─── Inverter Design Engine ─────────────────────────────────
+// When no exact kW match exists, design optimal inverter combination
+function designInverters(invRows, targetKw, phase, brand) {
+  if (targetKw <= 0) return [];
+
+  // Collect available inverters matching phase
+  var available = [];
+  invRows.forEach(function(r) {
+    var vals = Object.values(r).join(' ').toLowerCase();
+    // Phase filter — check multiple notations used across catalogs
+    var is1P = /\b1p\b|1-phase|1phase|single.?phase|สาย\s*2|single/i.test(vals);
+    var is3P = /\b3p\b|3-phase|3phase|three.?phase|สาย\s*4/i.test(vals);
+    // If neither marker found, include the row (some catalogs omit phase label)
+    var phaseMatch = (!is1P && !is3P) || (phase === '1P' && is1P) || (phase === '3P' && is3P);
+    if (!phaseMatch) return;
+    // Skip accessories
+    var itype = (extractField(r, ['ประเภท', 'type']) || '').toLowerCase();
+    if (/sensor|dongle|logger|meter|pqm|accessory/.test(itype)) return;
+    var firstKey = Object.keys(r)[0];
+    var kwVal = parseFloat(String(r[firstKey]).replace(/[^\d.]/g, ''));
+    if (kwVal > 0 && kwVal <= 1000) {
+      var model = extractField(r, ['รุ่น', 'model', 'sku']) || brand + ' ' + kwVal + 'kW';
+      var itypeDisplay = extractField(r, ['ประเภท', 'type']) || '';
+      available.push({ row: r, model: model, kw: kwVal, type: itypeDisplay });
+    }
+  });
+
+  if (!available.length) return [];
+  available.sort(function(a, b) { return b.kw - a.kw; });
+
+  // 1) Exact match
+  for (var i = 0; i < available.length; i++) {
+    if (available[i].kw === targetKw) {
+      return [{ row: available[i].row, model: available[i].model, kw: available[i].kw, type: available[i].type, qty: 1 }];
+    }
+  }
+
+  // Overshoot tolerance: prefer exact/zero-overshoot combos, allow up to 30% overshoot as last resort
+  var OVERSHOOT_LIMIT = 0.30;
+
+  // 2) Single model × N
+  var bestSingle = null, bestSingleScore = Infinity;
+  available.forEach(function(inv) {
+    if (inv.kw > targetKw) {
+      var overshoot = (inv.kw - targetKw) / targetKw;
+      if (overshoot <= OVERSHOOT_LIMIT) {
+        var score = 1 + overshoot * 10;
+        if (score < bestSingleScore) {
+          bestSingleScore = score;
+          bestSingle = [{ row: inv.row, model: inv.model, kw: inv.kw, type: inv.type, qty: 1 }];
+        }
+      }
+    } else if (inv.kw > 0) {
+      var qty = Math.ceil(targetKw / inv.kw);
+      var total = inv.kw * qty;
+      var overshoot = (total - targetKw) / targetKw;
+      if (overshoot <= OVERSHOOT_LIMIT) {
+        var score = qty + overshoot * 10;
+        if (score < bestSingleScore) {
+          bestSingleScore = score;
+          bestSingle = [{ row: inv.row, model: inv.model, kw: inv.kw, type: inv.type, qty: qty }];
+        }
+      }
+    }
+  });
+
+  // 3) Two-model mix — prefer lowest overshoot, then fewest units
+  var bestMix = null, bestMixScore = Infinity;
+  for (var i = 0; i < available.length; i++) {
+    for (var j = i; j < available.length; j++) {
+      var maxA = Math.min(10, Math.max(2, Math.ceil(targetKw / available[i].kw) + 1));
+      for (var a = 1; a < maxA; a++) {
+        var remaining = targetKw - (available[i].kw * a);
+        if (remaining <= 0) break;
+        var b = Math.ceil(remaining / available[j].kw);
+        var total = available[i].kw * a + available[j].kw * b;
+        if (total >= targetKw) {
+          var overshoot = (total - targetKw) / targetKw;
+          if (overshoot <= OVERSHOOT_LIMIT) {
+            var units = a + b;
+            // Score: overshoot is primary (exact fit wins), then fewest units
+            var score = overshoot * 100 + units;
+            if (score < bestMixScore) {
+              bestMixScore = score;
+              if (available[i].model === available[j].model) {
+                bestMix = [{ row: available[i].row, model: available[i].model, kw: available[i].kw, type: available[i].type, qty: a + b }];
+              } else {
+                bestMix = [
+                  { row: available[i].row, model: available[i].model, kw: available[i].kw, type: available[i].type, qty: a },
+                  { row: available[j].row, model: available[j].model, kw: available[j].kw, type: available[j].type, qty: b }
+                ];
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Pick best: prefer lowest overshoot (mix wins if it's cleaner)
+  if (bestSingle && bestMix) {
+    // Normalize scores to same scale for comparison
+    var singleOvNorm = bestSingleScore - (bestSingle[0].qty);
+    var mixOvNorm = bestMixScore / 100;
+    return mixOvNorm < singleOvNorm - 0.01 ? bestMix : bestSingle;
+  }
+  return bestSingle || bestMix || [];
 }
 
 // ─── Smart System Spec Parser ────────────────────────────────
@@ -444,13 +553,17 @@ async function parseSystemSpec(text) {
   var lo = text.toLowerCase();
   var items = [];
 
+  // Detect system size (kW) — must come before phase detection
+  var kwMatch = lo.match(/(\d+(?:\.\d+)?)\s*kw/);
+  var systemKw = kwMatch ? parseFloat(kwMatch[1]) : 5; // default 5kW
+  if (systemKw <= 0) systemKw = 5;
+
   // Detect phase
+  // Default: systems ≥15kW are 3P unless explicitly stated as 1P
   var phase = '1P';
   if (/3\s*(?:phase|เฟส|p\b)/i.test(text)) phase = '3P';
-
-  // Detect system size (kW)
-  var kwMatch = lo.match(/(\d+)\s*kw/);
-  var systemKw = kwMatch ? parseInt(kwMatch[1]) : 5; // default 5kW
+  else if (/1\s*(?:phase|เฟส|p\b)/i.test(text)) phase = '1P';
+  else if (systemKw >= 15) phase = '3P'; // Large systems auto-upgrade to 3P
 
   // Detect inverter brand
   var invBrand = '';
@@ -472,7 +585,7 @@ async function parseSystemSpec(text) {
   else if (/แผง\s*(\d{3})/i.test(lo)) { panelWatts = parseInt(RegExp.$1); }
 
   // Want battery?
-  var wantBatt = /batt|แบต/i.test(lo);
+  var wantBatt = /batt|แบต|แบท/i.test(lo);
   var battKwh = 0;
   var battMatch = lo.match(/batt(?:ery)?\s*(\d+)/i);
   if (battMatch) battKwh = parseInt(battMatch[1]);
@@ -579,32 +692,41 @@ async function parseSystemSpec(text) {
         items.push({ part_number: invModel, part_name: invModel + (invDetail ? ' (' + invDetail + ')' : ''), manufacturer: 'Sigenergy', category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: '' });
       }
     } else {
-      // String/Hybrid inverters — find closest kW match
-      var bestInv = null, bestDiff = 9999;
-      invRows.forEach(function(r) {
-        var vals = Object.values(r).join(' ').toLowerCase();
-        // Check phase match
-        if (phase === '1P' && vals.indexOf('3p') >= 0 && vals.indexOf('1p') < 0) return;
-        if (phase === '3P' && vals.indexOf('1p') >= 0 && vals.indexOf('3p') < 0) return;
-        // Extract kW from first column or size column
-        var kwVal = 0;
-        var firstKey = Object.keys(r)[0];
-        var fv = parseFloat(String(r[firstKey]).replace(/[^\d.]/g, ''));
-        if (fv > 0 && fv <= 1000) kwVal = fv;
-        if (!kwVal) {
-          var m = vals.match(/(\d+)\s*k/);
-          if (m) kwVal = parseInt(m[1]);
+      // Inverter Design Engine — handles exact match + smart combinations
+      var designed = designInverters(invRows, systemKw, phase, invBrand);
+      if (designed.length > 0) {
+        designed.forEach(function(d) {
+          var invPrice = extractPrice(d.row);
+          var note = '';
+          if (designed.length > 1) {
+            note = 'AI designed: ' + designed.length + ' models combined for ' + systemKw + 'kW';
+          } else if (d.qty > 1) {
+            note = 'AI designed: ' + d.qty + 'x ' + d.kw + 'kW = ' + (d.qty * d.kw) + 'kW';
+          }
+          items.push({ part_number: d.model, part_name: d.model + (d.type ? ' (' + d.type + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: d.qty, unit_cost: invPrice, total_cost: d.qty * invPrice, notes: note });
+        });
+      } else {
+        // Fallback: closest single inverter
+        var bestInv = null, bestDiff = 9999;
+        invRows.forEach(function(r) {
+          var vals = Object.values(r).join(' ').toLowerCase();
+          var fb1P = /\b1p\b|1-phase|1phase|single.?phase/i.test(vals);
+          var fb3P = /\b3p\b|3-phase|3phase|three.?phase/i.test(vals);
+          var fbMatch = (!fb1P && !fb3P) || (phase === '1P' && fb1P) || (phase === '3P' && fb3P);
+          if (!fbMatch) return;
+          var firstKey = Object.keys(r)[0];
+          var fv = parseFloat(String(r[firstKey]).replace(/[^\d.]/g, ''));
+          if (fv > 0 && fv <= 1000) {
+            var diff = Math.abs(fv - systemKw);
+            if (diff < bestDiff) { bestDiff = diff; bestInv = r; }
+          }
+        });
+        if (bestInv) {
+          var invPrice = extractPrice(bestInv);
+          var invModel = extractField(bestInv, ['รุ่น', 'model', 'sku']) || invBrand + ' ' + systemKw + 'kW';
+          var invType = extractField(bestInv, ['ประเภท', 'type']) || '';
+          items.push({ part_number: invModel, part_name: invModel + (invType ? ' (' + invType + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: 'Note: closest available to ' + systemKw + 'kW' });
         }
-        if (kwVal > 0) {
-          var diff = Math.abs(kwVal - systemKw);
-          if (diff < bestDiff) { bestDiff = diff; bestInv = r; }
-        }
-      });
-      if (bestInv) {
-        var invPrice = extractPrice(bestInv);
-        var invModel = extractField(bestInv, ['รุ่น', 'model', 'sku']) || invBrand + ' ' + systemKw + 'kW';
-        var invType = extractField(bestInv, ['ประเภท', 'type']) || '';
-        items.push({ part_number: invModel, part_name: invModel + (invType ? ' (' + invType + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: '' });
       }
       if (invBrand === 'Huawei') {
         // Smart Dongle WIFI
@@ -1104,11 +1226,108 @@ function summary(d) {
   return t;
 }
 
-// ─── Quotation PDF generator (Python subprocess) ─────────────
-var QSOLAR_SCRIPT = path.join(__dirname, '..', '..', 'mcp-qsolar', 'server.py');
+// ─── BOM PDF generator (Python subprocess via mcp-bomsolar) ──
+var BOMSOLAR_SCRIPT = path.join(__dirname, 'mcp-bomsolar', 'server.py');
+
+function generateBomPdf(data) {
+  return new Promise(function(resolve, reject) {
+    var cp = require('child_process');
+    // Build cost_summary
+    var tc = 0;
+    data.items.forEach(function(i) { tc += i.total_cost; });
+    var systemKw = 0;
+    data.items.forEach(function(i) {
+      if (i.category === '\u0e42\u0e21\u0e14\u0e39\u0e25') {
+        var wMatch = i.part_name.match(/(\d{3,4})\s*W/i);
+        if (wMatch) systemKw = Math.round(i.quantity * parseInt(wMatch[1]) / 1000);
+      }
+    });
+    if (!systemKw) {
+      var kwMatch = (data.project_name || '').match(/(\d+)\s*kw/i);
+      systemKw = kwMatch ? parseInt(kwMatch[1]) : 5;
+    }
+    var systemWp = systemKw * 1000;
+    var labor = systemWp * 4.5;
+    var bos = systemWp * 0.7;
+    var errorCost = systemWp * 1.0;
+    var crane = systemKw >= 30 ? 15000 : 0;
+    var vat = tc * 0.07;
+    var peaTable = [[10,6000],[20,8500],[30,12500],[40,15500],[100,21500],[200,24000],[500,36000],[1000,46000]];
+    var peaFee = 0;
+    for (var pi = 0; pi < peaTable.length; pi++) {
+      if (systemKw <= peaTable[pi][0]) { peaFee = peaTable[pi][1]; break; }
+    }
+    var grandTotal = tc + vat + labor + bos + errorCost + crane + peaFee;
+
+    var now = new Date();
+    var dateStr = data.order_date || (now.getDate() + '/' + (now.getMonth()+1) + '/' + (now.getFullYear() % 100));
+    var outFile = 'bom-' + (data.project_name || 'project').replace(/[^a-zA-Z0-9\u0e00-\u0e7f]/g, '_').slice(0, 40) + '-' + Date.now() + '.pdf';
+    var outPath = path.join(__dirname, 'boms', outFile);
+
+    var payload = JSON.stringify({
+      tool: 'bomsolar_generate_pdf',
+      project_name: data.project_name || '',
+      project_address: data.project_address || '',
+      order_date: dateStr,
+      items: data.items,
+      output_path: outPath,
+      notes: data.notes || '',
+      cost_summary: {
+        equipment_total: tc,
+        vat_7pct: Math.round(vat),
+        labor: labor,
+        bos: bos,
+        error_cost: errorCost,
+        crane: crane,
+        pea_mea_fee: peaFee,
+        grand_total: Math.round(grandTotal),
+        actual_wp: systemWp,
+      },
+    });
+
+    var env = Object.assign({}, process.env, {
+      ORACLE_REPO_ROOT: path.join(__dirname, '..', '..'),
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUSERBASE: '/var/www/vhosts/enervia.co.th/.local',
+      PYTHONPATH: '/var/www/vhosts/enervia.co.th/.local/lib/python3.11/site-packages',
+    });
+
+    cp.execFile('python3', [BOMSOLAR_SCRIPT, payload], { timeout: 60000, env: env, maxBuffer: 5 * 1024 * 1024 },
+      function(err, stdout, stderr) {
+        if (err) { return reject(new Error(stderr || err.message)); }
+        try {
+          var lines = stdout.trim().split('\n');
+          var jsonLine = '';
+          for (var i = lines.length - 1; i >= 0; i--) {
+            if (lines[i].charAt(0) === '{') { jsonLine = lines[i]; break; }
+          }
+          if (!jsonLine) throw new Error('No JSON in output: ' + stdout.slice(0, 200));
+          var result = JSON.parse(jsonLine);
+          if (!result.success) return reject(new Error(result.error || 'bomsolar failed'));
+          result.filename = outFile;
+          resolve(result);
+        } catch (e) { reject(new Error('JSON parse error: ' + stdout.slice(0, 200))); }
+      }
+    );
+  });
+}
+
+// ─── Quotation PDF generator (Python subprocess via mcp-qsolar) ──
+var QSOLAR_SCRIPT = path.join(__dirname, 'mcp-qsolar', 'server.py');
+
+// ─── Quotation Memory (last quotation per chat + pending update confirm) ──
+// lastQuotation: key → { brand, size_kw, phase, has_battery, has_backup, specStr, ts }
+// quotationConfirmPending: key → { spec, specStr, ts }
+var lastQuotation = new Map();
+var quotationConfirmPending = new Map();
+var QUOTATION_TTL = 60 * 60 * 1000; // 1 hour — window to detect "update" intent
+
+function isConfirmation(lo) {
+  return /^(ใช่|ครับ|ค่ะ|ok|yes|ยืนยัน|ตกลง|โอเค|โอ้เค)\s*$/.test(lo.trim());
+}
 
 function isQuotationRequest(lo) {
-  return /ใบเสนอราคา|quotation|เสนอราคา|ขอใบเสนอ/.test(lo);
+  return /ใบเสนอราคา|quotation|เสนอราคา|ขอใบเสนอ|ทำใบเสนอราคา/.test(lo);
 }
 
 function parseQuotationSpec(text) {
@@ -1116,38 +1335,151 @@ function parseQuotationSpec(text) {
   var brand = 'ATMOCE';
   if (/sig(?:energy)?/.test(lo)) brand = 'Sigenergy';
   else if (/huawei/.test(lo)) brand = 'Huawei';
+  else if (/deye/.test(lo)) brand = 'Deye';
+  else if (/hoymiles|hoy/.test(lo)) brand = 'Hoymiles';
   else if (/sol[io]s/.test(lo)) brand = 'Solis';
   else if (/atmoce/.test(lo)) brand = 'ATMOCE';
 
+  // Panel brand + watt
+  var panelBrand = '', panelWatt = 0;
+  var pm;
+  if ((pm = lo.match(/ja\s*(?:solar\s*)?(\d{3})?/))) { panelBrand = 'JA Solar'; panelWatt = pm[1] ? parseInt(pm[1]) : 625; }
+  else if ((pm = lo.match(/aiko\s*(\d{3})?/))) { panelBrand = 'AIKO'; panelWatt = pm[1] ? parseInt(pm[1]) : 650; }
+  if (!panelWatt) panelWatt = brand === 'Sigenergy' ? 650 : 625;
+  if (!panelBrand) panelBrand = brand === 'Sigenergy' ? 'AIKO' : 'JA Solar';
+
+  // Panel count → calculate kW
+  var panelCount = 0;
+  var pcm = text.match(/(\d+)\s*แผ[งง่]/);
+  if (pcm) panelCount = parseInt(pcm[1]);
+
+  // kW detection — panel count overrides if present
   var kwMatch = lo.match(/([\d.]+)\s*kw/);
   var sizeKw = kwMatch ? parseFloat(kwMatch[1]) : 5.0;
+  if (panelCount > 0) {
+    sizeKw = panelCount * panelWatt / 1000;
+  }
 
   var phase = /3\s*(?:phase|เฟส|p\b)/.test(lo) ? '3P' : '1P';
-  var hasBattery = /batt|แบต/.test(lo);
-  var hasBackup = /backup|สำรอง/.test(lo);
+  var hasBattery = /batt|battery|แบต|แบท/.test(lo);
+  var hasBackup = /backup|สำรอง|back\s*up/.test(lo);
   if (hasBackup) hasBattery = true;
 
-  return { brand: brand, size_kw: sizeKw, phase: phase, has_battery: hasBattery, has_backup: hasBackup };
+  // ATMOCE: battery default includes backup (110k/130k), not batt-only (99k)
+  // User must explicitly say "no backup" or "batt only" to get batt-only
+  if (brand === 'ATMOCE' && hasBattery && !hasBackup) {
+    var noBackup = /ไม่.*backup|no\s*backup|batt\s*only|เฉพาะ.*แบต|เฉพาะ.*batt/i.test(lo);
+    if (!noBackup) hasBackup = true;
+  }
+
+  // Battery kWh
+  var battKwh = 0;
+  var bm = lo.match(/(?:batt(?:ery)?|แบต|แบท)\s*(\d+(?:\.\d+)?)\s*(?:kw|kwh)?/);
+  if (bm) battKwh = parseFloat(bm[1]);
+  else { bm = lo.match(/(\d+(?:\.\d+)?)\s*(?:kw|kwh)\s*(?:batt|แบต|แบท)/); if (bm) battKwh = parseFloat(bm[1]); }
+
+  // Battery quantity (e.g., "batt 7 *2" or "batt7 2ลูก")
+  var battQty = 1;
+  var bqm = text.match(/batt(?:ery)?\s*\d+\s*\*\s*(\d+)/i) || text.match(/batt(?:ery)?\s*\d+\s+(\d+)\s*ลูก/i);
+  if (bqm) battQty = parseInt(bqm[1]);
+  if (battKwh > 0 && battQty > 1) battKwh = battKwh * battQty;
+
+  // Customer name — "คุณ[name]" pattern
+  var customerName = '';
+  var cnm = text.match(/คุณ\s*([^\s,]+(?:\s+[^\s,]+)?)/);
+  if (cnm) customerName = cnm[1].replace(/\s*(atmoce|sigenergy|huawei|deye|solis|hoymiles|inverter|phase|kw|แผง|batt|backup|ขาย|ราคา|ส่วนลด|ฟรี|ติดตั้ง|เฟส)/gi, '').trim();
+
+  // Selling price — "ขาย [number]" or "ขายราคา [number]" or "ราคา [number]" at end
+  var grandTotal = 0;
+  var spm = text.match(/(?:ขาย(?:ราคา)?|ราคาขาย)\s*([\d,]+)/);
+  if (spm) grandTotal = parseFloat(spm[1].replace(/,/g, ''));
+
+  // Discount — "ส่วนลด/ลดราคา/ลด [number]"
+  var discount = 0;
+  var dm = text.match(/(?:ส่วนลด|ลดราคา(?:พิเศษ)?|ลด)\s*([\d,]+)/);
+  if (dm) discount = parseFloat(dm[1].replace(/,/g, ''));
+
+  // Remarks — collect promo phrases
+  var remarks = [];
+  if (/ฟรี.*กันนก|ฟรี.*ตะแกรง/.test(text)) remarks.push('ฟรีติดตั้งตะแกรงกันนก');
+  var monthMatch = text.match(/ติดตั้ง\s*ภายใน(?:เดือน)?\s*(\S+)/);
+  if (monthMatch) remarks.push('*** ราคาติดตั้งภายในเดือน' + monthMatch[1] + ' ***');
+  var touMatch = text.match(/ฟรี.*(?:ค่าธรรมเนียม|TOU).*?(\d[\d,]*)\s*บาท/);
+  if (touMatch) remarks.push('ฟรี ค่าธรรมเนียมขอมิเตอร์ TOU จากการไฟฟ้า มูลค่า ' + touMatch[1] + ' บาท');
+  var cleanMatch = text.match(/ล้างแผง\s*(\d+)\s*ครั้ง\s*(\d+)\s*ปี/);
+  if (cleanMatch) remarks.push('ล้างแผงฟรี ' + cleanMatch[1] + ' ครั้ง ภายในระยะเวลา ' + cleanMatch[2] + ' ปี');
+  // Check for "จากราคาเต็ม [amount]"
+  var fullPriceMatch = text.match(/จากราคาเต็ม\s*([\d,]+)/);
+
+  return {
+    brand: brand,
+    size_kw: sizeKw,
+    phase: phase,
+    has_battery: hasBattery,
+    has_backup: hasBackup,
+    customer_name: customerName,
+    grand_total: grandTotal,
+    discount: discount,
+    panel_brand: panelBrand,
+    panel_watt: panelWatt,
+    panel_count: panelCount,
+    battery_kwh: battKwh,
+    remarks: remarks.join('|'),
+    full_price: fullPriceMatch ? parseFloat(fullPriceMatch[1].replace(/,/g, '')) : 0,
+  };
 }
 
 function generateQuotationPdf(spec, customerName, projectName) {
   return new Promise(function(resolve, reject) {
     var cp = require('child_process');
-    var payload = JSON.stringify({
-      tool: 'qsolar_from_spec',
-      spec: spec,
-      customer_name: customerName || 'เสนอราคา',
-      project_name: projectName || '',
-    });
+    // Pass structured spec to qsolar_generate to avoid lossy re-parsing in Python.
+    // has_battery / has_backup are already resolved by parseQuotationSpec in JS.
+    var payload;
+    if (spec && typeof spec === 'object' && spec.brand) {
+      payload = JSON.stringify({
+        tool: 'qsolar_generate',
+        brand: spec.brand,
+        size_kw: spec.size_kw,
+        phase: spec.phase,
+        has_battery: spec.has_battery || false,
+        has_backup: spec.has_backup || false,
+        customer_name: customerName || spec.customer_name || 'เสนอราคา',
+        project_name: projectName || '',
+        grand_total: spec.grand_total || 0,
+        discount: spec.discount || 0,
+        panel_brand: spec.panel_brand || '',
+        panel_watt: spec.panel_watt || 0,
+        battery_kwh: spec.battery_kwh || 0,
+        remarks: spec.remarks || '',
+      });
+    } else {
+      // Fallback: raw string spec (legacy path)
+      payload = JSON.stringify({
+        tool: 'qsolar_from_spec',
+        spec: spec,
+        customer_name: customerName || 'เสนอราคา',
+        project_name: projectName || '',
+      });
+    }
     var env = Object.assign({}, process.env, {
       ORACLE_REPO_ROOT: path.join(__dirname, '..', '..'),
+      QSOLAR_OUTPUT_DIR: path.join(__dirname, 'boms'),
+      QSOLAR_ASSET_DIR: path.join(__dirname, 'assets'),
       PYTHONIOENCODING: 'utf-8',
+      PYTHONUSERBASE: '/var/www/vhosts/enervia.co.th/.local',
+      PYTHONPATH: '/var/www/vhosts/enervia.co.th/.local/lib/python3.11/site-packages',
     });
-    cp.execFile('python', [QSOLAR_SCRIPT, payload], { timeout: 60000, env: env },
+    cp.execFile('python3', [QSOLAR_SCRIPT, payload], { timeout: 60000, env: env },
       function(err, stdout, stderr) {
         if (err) { return reject(new Error(stderr || err.message)); }
         try {
-          var result = JSON.parse(stdout.trim().split('\n').pop());
+          var lines = stdout.trim().split('\n');
+          var jsonLine = '';
+          for (var i = lines.length - 1; i >= 0; i--) {
+            if (lines[i].charAt(0) === '{') { jsonLine = lines[i]; break; }
+          }
+          if (!jsonLine) throw new Error('No JSON in output: ' + stdout.slice(0, 200));
+          var result = JSON.parse(jsonLine);
           if (!result.success) return reject(new Error(result.error || 'qsolar failed'));
           resolve(result);
         } catch (e) { reject(new Error('JSON parse error: ' + stdout.slice(0, 200))); }
@@ -1156,23 +1488,28 @@ function generateQuotationPdf(spec, customerName, projectName) {
   });
 }
 
-async function startQuotation(ev, text, rt) {
-  var spec = parseQuotationSpec(text);
-  var specStr = text.replace(/ใบเสนอราคา|quotation|เสนอราคา|ขอใบเสนอ|นัด|nasri|ไอ่นัด/gi, '').trim();
-  if (!specStr) specStr = spec.brand + ' ' + spec.size_kw + 'kw ' + spec.phase;
-
-  var statusMsg = '\u{1F4C4} กำลังสร้างใบเสนอราคา...\n' +
+// ─── Quotation PDF sender (shared by startQuotation + confirm handler) ──
+async function doGenerateAndSendQuotation(ev, specStr, spec, rt) {
+  var k = sKey(ev.source);
+  var customerLabel = spec.customer_name ? ' (' + spec.customer_name + ')' : '';
+  var priceLabel = spec.grand_total ? '\nราคา: ' + spec.grand_total.toLocaleString() + ' บาท' : '';
+  if (spec.discount) priceLabel += ' (ลด ' + spec.discount.toLocaleString() + ')';
+  var statusMsg = '\u{1F4C4} เดี๋ยวนัดจัดให้เลยนะ...' + customerLabel + '\n' +
     spec.brand + ' ' + spec.size_kw + 'kW ' + spec.phase +
-    (spec.has_battery ? ' + Battery' : '') +
-    (spec.has_backup ? ' + Backup' : '');
+    (spec.has_battery ? ' + Battery' + (spec.battery_kwh ? ' ' + spec.battery_kwh + 'kWh' : '') : '') +
+    (spec.has_backup ? ' + Backup' : '') +
+    priceLabel;
 
   await rText(rt, statusMsg);
 
   try {
-    var result = await generateQuotationPdf(specStr, 'เสนอราคา', '');
+    var result = await generateQuotationPdf(spec, spec.customer_name || 'เสนอราคา', '');
     var pdfFile = path.basename(result.path);
     var pdfUrl = 'https://ai.enervia.co.th/api/bom/' + encodeURIComponent(pdfFile);
     var to = ev.source.type === 'group' ? ev.source.groupId : ev.source.userId;
+
+    // Remember this quotation for future update detection
+    lastQuotation.set(k, { brand: spec.brand, size_kw: spec.size_kw, phase: spec.phase, has_battery: spec.has_battery, has_backup: spec.has_backup, specStr: specStr, ts: Date.now() });
 
     var priceText = '\u0e3f' + result.grand_total.toLocaleString();
     await lPush(to, [{
@@ -1208,8 +1545,64 @@ async function startQuotation(ev, text, rt) {
   } catch (e) {
     console.error('[quotation]', e.message);
     var to2 = ev.source.type === 'group' ? ev.source.groupId : ev.source.userId;
-    await lPush(to2, [{ type: 'text', text: 'ขออภัยครับ สร้างใบเสนอราคาไม่ได้: ' + e.message.slice(0, 100) }]);
+    await lPush(to2, [{ type: 'text', text: '\u0e02\u0e2d\u0e2d\u0e20\u0e31\u0e22\u0e04\u0e23\u0e31\u0e1a \u0e2a\u0e23\u0e49\u0e32\u0e07 PDF \u0e44\u0e21\u0e48\u0e44\u0e14\u0e49 \u0e25\u0e2d\u0e07\u0e43\u0e2b\u0e21\u0e48\u0e2d\u0e35\u0e01\u0e04\u0e23\u0e31\u0e49\u0e07\u0e04\u0e23\u0e31\u0e1a' }]);
   }
+}
+
+async function startQuotation(ev, text, rt) {
+  var k = sKey(ev.source);
+  // Strip trigger words + quotation keywords to see if there's a real spec
+  var specStr = text.replace(/ใบเสนอราคา|quotation|เสนอราคา|ขอใบเสนอ|ทำใบเสนอราคา|นัด|nasri|ไอ่นัด|เสนอ|ทำ|ขอ/gi, '').trim();
+
+  // ── No spec or incomplete spec → ask for details first ──
+  // Require BOTH brand AND kW to auto-generate; brand alone is not enough
+  var slo = specStr.toLowerCase();
+  var hasBrand = /atmoce|huawei|sol[io]s|deye|sig(?:energy)?|hoymiles|enphase/i.test(slo);
+  var hasKw = /\d+\s*kw/i.test(slo) || /\d+\s*แผ[งง่]/i.test(slo);
+  if (!specStr || !hasBrand || !hasKw) {
+    // Build a smart prompt — acknowledge what they gave, ask for the rest
+    var askParts = [];
+    if (!hasBrand) askParts.push('1. ยี่ห้อ? (ATMOCE / Sigenergy / Huawei / Deye / Solis / Hoymiles)');
+    if (!hasKw) askParts.push('2. ขนาดกี่ kW? (เช่น 5kw, 10kw, 42kw) หรือกี่แผง?');
+    askParts.push('3. กี่เฟส? (1 เฟส / 3 เฟส)');
+    askParts.push('4. ใส่แบตด้วยมั้ย? (ถ้าใส่ บอกขนาดด้วยนะ เช่น แบท 14kw)');
+    askParts.push('5. ราคาขายเท่าไหร่? (หรือให้คำนวณให้)');
+
+    await rText(rt, 'ได้เลยครับพี่ 📋 ช่วยบอกรายละเอียดหน่อยนะ:\n\n' +
+      askParts.join('\n') +
+      '\n\nตัวอย่าง: "นัด ทำใบเสนอราคา deye 42kw 3phase แบท 14kw ขาย 350000"\nพิมพ์ทีเดียวเลยก็ได้ครับ 😎');
+    return;
+  }
+
+  var spec = parseQuotationSpec(text);
+  if (!specStr) specStr = spec.brand + ' ' + spec.size_kw + 'kw ' + spec.phase;
+
+  // ── Update detection: same brand+kW but with new additions ──
+  var prev = lastQuotation.get(k);
+  if (prev && (Date.now() - prev.ts) < QUOTATION_TTL) {
+    var sameBrand = prev.brand === spec.brand;
+    var sameKw = prev.size_kw === spec.size_kw;
+    var newBattery = spec.has_battery && !prev.has_battery;
+    var newBackup = spec.has_backup && !prev.has_backup;
+    var hasAdditions = newBattery || newBackup;
+
+    if (sameBrand && sameKw && hasAdditions) {
+      // Ask for confirmation before regenerating
+      var addList = [];
+      if (newBattery) addList.push('Battery');
+      if (newBackup) addList.push('Backup');
+      var addStr = addList.join(' + ');
+
+      // Store pending spec
+      quotationConfirmPending.set(k, { spec: spec, specStr: specStr, ts: Date.now() });
+
+      await rText(rt, 'ต้องการ update ใบเสนอราคาที่ส่งไปก่อนหน้าใช่มั้ยครับพี่? จะเพิ่ม ' + addStr + ' เข้าไปในระบบ ' + spec.brand + ' ' + spec.size_kw + 'kW');
+      return;
+    }
+  }
+
+  // No previous quotation or different spec — generate directly
+  await doGenerateAndSendQuotation(ev, specStr, spec, rt);
 }
 
 // ─── Trigger & Intent Detection ──────────────────────────────
@@ -1249,7 +1642,7 @@ async function startBom(ev, specText) {
     var sess = newSess(k);
     sess.step = 'items';
     sess.data.project_name = '(auto)';
-    await rText(ev.replyToken, '📊 กำลังค้นหาจาก catalog ครับ...');
+    await rText(ev.replyToken, '📊 เดี๋ยวนัดหาจาก catalog ให้นะ...');
     try {
       var autoItems = await parseSystemSpec(specText);
       if (autoItems.length > 0) {
@@ -1257,7 +1650,7 @@ async function startBom(ev, specText) {
         sess.step = 'done';
         saveBom(k, sess.data, ev.source).catch(function(e) { console.error('[bom]', e); });
         var to = ev.source.type === 'group' ? ev.source.groupId : ev.source.userId;
-        await lPush(to, [{ type: 'text', text: summary(sess.data) + '\n✅ BOM จาก catalog พร้อมแล้วครับ\n\nพิมพ์ "ขอ pdf" เพื่อสร้าง PDF\n"แก้ไข" เพื่อแก้ไข\n"ชื่อ xxx" เพื่อตั้งชื่อโปรเจกต์' }]);
+        await lPush(to, [{ type: 'text', text: summary(sess.data) + '\n✅ จัดให้เรียบร้อย!\n\nพิมพ์ "ขอ pdf" เพื่อสร้าง PDF\n"แก้ไข" เพื่อแก้ไข\n"ชื่อ xxx" เพื่อตั้งชื่อโปรเจกต์' }]);
         return;
       }
     } catch (e) { console.error('[spec]', e); }
@@ -1266,7 +1659,7 @@ async function startBom(ev, specText) {
   }
 
   newSess(k);
-  await rText(ev.replyToken, 'รับครับ เริ่มสร้าง BOM 📋\n\nชื่อโปรเจกต์อะไรครับ?');
+  await rText(ev.replyToken, 'โอเค จัดให้เลย 📋\n\nชื่อโปรเจกต์อะไรครับพี่?');
 }
 
 async function bomMsg(ev) {
@@ -1393,9 +1786,17 @@ async function saveBom(k, data, src) {
 
 // ─── Signature ────────────────────────────────────────────────
 function verifySig(body, sig) {
-  if (!LINE_SECRET) return true;
+  // SECURITY: if LINE_SECRET is not configured, reject all webhook requests.
+  // Accepting without verification would allow anyone to forge webhook events.
+  if (!LINE_SECRET) {
+    console.error('[security] LINE_CHANNEL_SECRET not set — rejecting webhook request');
+    return false;
+  }
   if (!sig) return false;
-  return crypto.createHmac('SHA256', LINE_SECRET).update(body).digest('base64') === sig;
+  var expected = crypto.createHmac('SHA256', LINE_SECRET).update(body).digest('base64');
+  // Constant-time comparison to prevent timing attacks
+  if (expected.length !== sig.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
 }
 
 // ─── Message handler ──────────────────────────────────────────
@@ -1408,7 +1809,7 @@ async function handleText(ev) {
 
   // ── PDF request (works anytime, no trigger needed) ──
   if (isPdfRequest(lo)) {
-    // If there's a saved BOM, generate PDF
+    // If there's a saved BOM, generate real PDF via mcp-bomsolar
     var saved = lastBom.get(k);
     // Lazy-load data from file if not in memory
     if (saved && !saved.data) {
@@ -1416,27 +1817,33 @@ async function handleText(ev) {
       if (!saved.data) { lastBom.delete(k); saved = null; }
     }
     if (saved) {
-      var tc = 0; saved.data.items.forEach(function(i) { tc += i.total_cost; });
-      var viewUrl = 'https://ai.enervia.co.th/api/bom-view/' + encodeURIComponent(saved.filename.replace('.json', '.html'));
-      // Send text summary first, then PDF flex
       var to = ev.source.type === 'group' ? ev.source.groupId : ev.source.userId;
       await lPush(to, [{ type: 'text', text: summary(saved.data) }]);
-      await lReply(rt, [{
-        type: 'flex', altText: 'BOM PDF: ' + (saved.data.project_name || 'BOM'),
-        contents: {
-          type: 'bubble', size: 'kilo',
-          header: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: '\ud83d\udcc4 BOM Document', weight: 'bold', size: 'lg', color: '#1a1a2e' }], backgroundColor: '#f0e68c', paddingAll: '12px' },
-          body: { type: 'box', layout: 'vertical', contents: [
-            { type: 'text', text: saved.data.project_name || 'BOM', weight: 'bold', size: 'md', wrap: true },
-            { type: 'text', text: saved.data.items.length + ' \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23 \u2022 \u0e3f' + tc.toLocaleString(), size: 'sm', color: '#666666', margin: 'sm' },
-            { type: 'separator', margin: 'md' },
-            { type: 'text', text: '\u0e01\u0e14\u0e1b\u0e38\u0e48\u0e21\u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e40\u0e1b\u0e34\u0e14 BOM \u0e41\u0e25\u0e49\u0e27\u0e01\u0e14 Save as PDF', size: 'xs', color: '#888888', margin: 'md', wrap: true },
-          ], paddingAll: '12px' },
-          footer: { type: 'box', layout: 'vertical', contents: [
-            { type: 'button', action: { type: 'uri', label: '\ud83d\udcc4 \u0e14\u0e32\u0e27\u0e19\u0e4c\u0e42\u0e2b\u0e25\u0e14 PDF', uri: viewUrl }, style: 'primary', color: '#1a237e' },
-          ], paddingAll: '12px' },
-        },
-      }]);
+      await rText(rt, '\u{1F4C4} กำลังสร้าง BOM PDF...');
+      try {
+        var pdfResult = await generateBomPdf(saved.data);
+        var pdfUrl = 'https://ai.enervia.co.th/api/bom/' + encodeURIComponent(pdfResult.filename);
+        var tc = 0; saved.data.items.forEach(function(i) { tc += i.total_cost; });
+        await lPush(to, [{
+          type: 'flex', altText: 'BOM PDF: ' + (saved.data.project_name || 'BOM'),
+          contents: {
+            type: 'bubble', size: 'kilo',
+            header: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: '\ud83d\udcc4 BOM Document', weight: 'bold', size: 'lg', color: '#1a1a2e' }], backgroundColor: '#f0e68c', paddingAll: '12px' },
+            body: { type: 'box', layout: 'vertical', contents: [
+              { type: 'text', text: saved.data.project_name || 'BOM', weight: 'bold', size: 'md', wrap: true },
+              { type: 'text', text: saved.data.items.length + ' \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23 \u2022 \u0e3f' + tc.toLocaleString(), size: 'sm', color: '#666666', margin: 'sm' },
+              { type: 'separator', margin: 'md' },
+              { type: 'text', text: '\u0e01\u0e14\u0e1b\u0e38\u0e48\u0e21\u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e40\u0e1b\u0e34\u0e14 BOM \u0e41\u0e25\u0e49\u0e27\u0e01\u0e14 Save as PDF', size: 'xs', color: '#888888', margin: 'md', wrap: true },
+            ], paddingAll: '12px' },
+            footer: { type: 'box', layout: 'vertical', contents: [
+              { type: 'button', action: { type: 'uri', label: '\ud83d\udcc4 \u0e14\u0e32\u0e27\u0e19\u0e4c\u0e42\u0e2b\u0e25\u0e14 PDF', uri: pdfUrl }, style: 'primary', color: '#1a237e' },
+            ], paddingAll: '12px' },
+          },
+        }]);
+      } catch (e) {
+        console.error('[bom-pdf]', e.message);
+        await lPush(to, [{ type: 'text', text: '\u0e02\u0e2d\u0e2d\u0e20\u0e31\u0e22\u0e04\u0e23\u0e31\u0e1a \u0e2a\u0e23\u0e49\u0e32\u0e07 PDF \u0e44\u0e21\u0e48\u0e44\u0e14\u0e49 \u0e25\u0e2d\u0e07\u0e43\u0e2b\u0e21\u0e48\u0e2d\u0e35\u0e01\u0e04\u0e23\u0e31\u0e49\u0e07\u0e04\u0e23\u0e31\u0e1a' }]);
+      }
       return;
     }
     // No saved BOM + "bom" in request → start new BOM
@@ -1454,6 +1861,24 @@ async function handleText(ev) {
   var handled = await bomMsg(ev);
   if (handled) return;
 
+  // ── Quotation update confirmation ──
+  var pending = quotationConfirmPending.get(k);
+  if (pending && (Date.now() - pending.ts) < QUOTATION_TTL) {
+    if (isConfirmation(lo)) {
+      quotationConfirmPending.delete(k);
+      await doGenerateAndSendQuotation(ev, pending.specStr, pending.spec, rt);
+      return;
+    }
+    // If user says something else (not a confirmation), clear the pending and continue normal flow
+    if (!/^(ไม่|no|ยกเลิก|cancel)/.test(lo)) {
+      // Not a clear rejection either — let it fall through to normal handling
+    } else {
+      quotationConfirmPending.delete(k);
+      await rText(rt, 'ตกลงครับ ยกเลิกการ update ใบเสนอราคา');
+      return;
+    }
+  }
+
   // ── Check Nasri trigger ──
   if (!isNasriTrigger(lo)) return;
 
@@ -1464,8 +1889,14 @@ async function handleText(ev) {
     await lReply(rt, [menuFlex()]); return;
   }
 
-  // ── Quotation request ──
+  // ── Quotation / PDF request (expanded keywords) ──
+  // Catches: ใบเสนอราคา, เสนอราคา, ทำใบเสนอราคา, ขอใบเสนอ, quotation
   if (isQuotationRequest(lo)) {
+    await startQuotation(ev, text, rt);
+    return;
+  }
+  // Broader catch: "เสนอ" + solar spec, or "ราคา" + brand/kw spec → treat as quotation
+  if (/เสนอ/.test(lo) && hasSystemSpec(lo)) {
     await startQuotation(ev, text, rt);
     return;
   }
@@ -1591,9 +2022,20 @@ async function handleText(ev) {
       return;
     }
   }
-  // General question → Claude API (uses token)
-  console.log('[nasri] Calling Claude for:', text.slice(0, 80));
-  var claudeReply = await askClaude(text, '');
+  // General question → Claude AI analysis (reads full message, analyzes intent)
+  console.log('[nasri] Claude AI analysis for:', text.slice(0, 80));
+  // Provide catalog context if available for better answers
+  var catalogCtx = '';
+  try {
+    var matches = await priceSearch(text);
+    if (matches.length > 0) {
+      catalogCtx = 'ข้อมูลจาก Enervia Catalog:\n';
+      matches.slice(0, 10).forEach(function(m) {
+        catalogCtx += '- ' + m.name + ': ฿' + m.price.toLocaleString() + ' [' + m.sheet + ']\n';
+      });
+    }
+  } catch (e) { /* ignore catalog errors */ }
+  var claudeReply = await askClaude(text, catalogCtx);
   await rText(rt, claudeReply);
 }
 
@@ -1613,9 +2055,11 @@ var server = http.createServer(async function(req, res) {
   // Health
   if (method === 'GET' && url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'nasri-line-bot', ts: new Date().toISOString(), line: LINE_SECRET ? 'connected' : 'not configured' }));
+    // SECURITY: do not expose config state (was leaking whether LINE_SECRET is set)
+    res.end(JSON.stringify({ status: 'ok', service: 'nasri-line-bot', ts: new Date().toISOString() }));
     return;
   }
+
 
   // Webhook
   if (method === 'POST' && url === '/webhook') {
@@ -1672,9 +2116,24 @@ var server = http.createServer(async function(req, res) {
   // BOM HTML view (for PDF printing)
   if (method === 'GET' && url.indexOf('/api/bom-view/') === 0) {
     var fn = decodeURIComponent(url.replace('/api/bom-view/', ''));
+    // SECURITY: strip to basename only — prevents path traversal via encoded slashes or `..`
+    fn = path.basename(fn);
     if (!fn || fn.indexOf('..') >= 0) { res.writeHead(400); res.end('Bad'); return; }
+    // SECURITY: only allow .html and .json extensions
+    if (!/\.(html|json)$/.test(fn)) { res.writeHead(400); res.end('Bad'); return; }
     // Check boms dir first, then tmp
     var fp = path.join(BOM_DIR, fn);
+    // SECURITY: verify resolved path stays within allowed directories
+    var resolvedFp = path.resolve(fp);
+    var resolvedBomDir = path.resolve(BOM_DIR);
+    var resolvedTmpDir = path.resolve(TMP_DIR);
+    if (!resolvedFp.startsWith(resolvedBomDir + path.sep) && !resolvedFp.startsWith(resolvedBomDir + '/')) {
+      fp = path.join(TMP_DIR, fn);
+      resolvedFp = path.resolve(fp);
+      if (!resolvedFp.startsWith(resolvedTmpDir + path.sep) && !resolvedFp.startsWith(resolvedTmpDir + '/')) {
+        res.writeHead(400); res.end('Bad'); return;
+      }
+    }
     if (!fs.existsSync(fp)) fp = path.join(TMP_DIR, fn);
     // If .html file exists, serve directly
     if (fs.existsSync(fp) && fn.endsWith('.html')) {
@@ -1703,12 +2162,29 @@ var server = http.createServer(async function(req, res) {
   // BOM download
   if (method === 'GET' && url.indexOf('/api/bom/') === 0) {
     var fn = decodeURIComponent(url.replace('/api/bom/', ''));
+    // SECURITY: strip to basename only — prevents path traversal via encoded slashes or `..`
+    fn = path.basename(fn);
     if (!fn || fn.indexOf('..') >= 0) { res.writeHead(400); res.end('Bad'); return; }
+    // SECURITY: only allow .pdf and .json extensions on this endpoint
+    if (!/\.(pdf|json)$/.test(fn)) { res.writeHead(400); res.end('Bad'); return; }
     var fp = path.join(BOM_DIR, fn);
+    // SECURITY: verify resolved path stays within allowed directories
+    var resolvedFp2 = path.resolve(fp);
+    var resolvedBomDir2 = path.resolve(BOM_DIR);
+    var resolvedTmpDir2 = path.resolve(TMP_DIR);
+    if (!resolvedFp2.startsWith(resolvedBomDir2 + path.sep) && !resolvedFp2.startsWith(resolvedBomDir2 + '/')) {
+      fp = path.join(TMP_DIR, fn);
+      resolvedFp2 = path.resolve(fp);
+      if (!resolvedFp2.startsWith(resolvedTmpDir2 + path.sep) && !resolvedFp2.startsWith(resolvedTmpDir2 + '/')) {
+        res.writeHead(400); res.end('Bad'); return;
+      }
+    }
     if (!fs.existsSync(fp)) fp = path.join(TMP_DIR, fn);
     if (!fs.existsSync(fp)) { res.writeHead(404); res.end('Not found'); return; }
     var d = fs.readFileSync(fp);
-    res.writeHead(200, { 'Content-Type': fn.endsWith('.pdf') ? 'application/pdf' : 'application/json', 'Content-Disposition': 'attachment; filename="' + fn + '"' });
+    // SECURITY: sanitise filename in Content-Disposition to strip any path separators
+    var safeFn = path.basename(fn).replace(/[^\w\-.]/g, '_');
+    res.writeHead(200, { 'Content-Type': fn.endsWith('.pdf') ? 'application/pdf' : 'application/json', 'Content-Disposition': 'attachment; filename="' + safeFn + '"' });
     res.end(d);
     return;
   }
@@ -1792,10 +2268,15 @@ function archiveOldBoms() {
       if (!files.length) return;
 
       try {
-        // Try system zip command
-        var cmd = 'cd "' + BOM_DIR + '" && zip -j "' + zipPath + '" ' + files.map(function(f) { return '"' + f + '"'; }).join(' ');
-        child_process.execSync(cmd, { timeout: 30000 });
-        console.log('[archive] Created: ' + zipName + ' (' + files.length + ' files)');
+        // SECURITY: use execFile (not execSync with shell) to avoid shell injection.
+        // Pass BOM_DIR as cwd and filenames as individual argv elements.
+        // Validate each filename is a plain basename before passing.
+        var safeFiles = files.filter(function(f) {
+          return path.basename(f) === f && !/[^\w\-.]/.test(f);
+        });
+        if (!safeFiles.length) { console.warn('[archive] No safe files for zip'); return; }
+        child_process.execFileSync('zip', ['-j', zipPath].concat(safeFiles), { cwd: BOM_DIR, timeout: 30000 });
+        console.log('[archive] Created: ' + zipName + ' (' + safeFiles.length + ' files)');
       } catch (e) {
         // Fallback: copy files to archive folder
         console.log('[archive] zip not available, moving files to archive/' + month + '/');
