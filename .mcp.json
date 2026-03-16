@@ -16,19 +16,19 @@
       "args": [
         "run",
         "--cwd",
-        "C:/Users/pO-Ch/Nasri-oracle/oracle-v2",
+        "/workspaces/Nasri-oracle/oracle-v2",
         "dev"
       ],
       "env": {
-        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+        "ORACLE_REPO_ROOT": "/workspaces/Nasri-oracle"
       }
     },
     "bomsolar": {
       "type": "stdio",
       "command": "python",
-      "args": ["C:/Users/pO-Ch/Nasri-oracle/mcp-bomsolar/server.py"],
+      "args": ["/workspaces/Nasri-oracle/mcp-bomsolar/server.py"],
       "env": {
-        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+        "ORACLE_REPO_ROOT": "/workspaces/Nasri-oracle"
       }
     },
     "engineer": {
@@ -37,27 +37,27 @@
       "args": [
         "run",
         "--cwd",
-        "C:/Users/pO-Ch/Nasri-oracle/mcp-engineer",
+        "/workspaces/Nasri-oracle/mcp-engineer",
         "dev"
       ],
       "env": {
-        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+        "ORACLE_REPO_ROOT": "/workspaces/Nasri-oracle"
       }
     },
     "pricesolar": {
       "type": "stdio",
       "command": "python",
-      "args": ["C:/Users/pO-Ch/Nasri-oracle/mcp-pricesolar/server.py"],
+      "args": ["/workspaces/Nasri-oracle/mcp-pricesolar/server.py"],
       "env": {
-        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+        "ORACLE_REPO_ROOT": "/workspaces/Nasri-oracle"
       }
     },
     "qsolar": {
       "type": "stdio",
       "command": "python",
-      "args": ["C:/Users/pO-Ch/Nasri-oracle/mcp-qsolar/server.py"],
+      "args": ["/workspaces/Nasri-oracle/mcp-qsolar/server.py"],
       "env": {
-        "ORACLE_REPO_ROOT": "C:/Users/pO-Ch/Nasri-oracle"
+        "ORACLE_REPO_ROOT": "/workspaces/Nasri-oracle"
       }
     }
   }

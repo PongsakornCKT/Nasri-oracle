@@ -1,0 +1,4 @@
+{
+  "name": "Nasri Oracle",
+  "postStartCommand": "bash /workspaces/Nasri-oracle/boot.sh"
+}
