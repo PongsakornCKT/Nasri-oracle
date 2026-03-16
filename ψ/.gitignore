@@ -2,6 +2,7 @@
 # Folders are tracked via .gitkeep, but contents are ignored
 memory/logs/*
 learn/*
+active/*
 !memory/logs/.gitkeep
 !learn/.gitkeep
 

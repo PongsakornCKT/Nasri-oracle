@@ -62,11 +62,44 @@ active/context → memory/logs → memory/retrospectives → memory/learnings �
 
 Raw observations distill into lasting wisdom, layer by layer.
 
-## Installed Skills
+## Installed Skills (30 skills, oracle-skills v2.0.10)
 
-- `/dig` — Mine past sessions
-- `/learn` — Explore a codebase
-- `/recap` — Session orientation
-- `/rrr` — Session retrospective
-- `/trace` — Find and discover
+### Core
+- `/dig` — Mine past sessions for patterns, decisions, and context
+- `/learn` — Explore and learn a codebase
+- `/recap` — Session orientation — summarize current state
+- `/rrr` — Session retrospective — reflect, record, refine
+- `/trace` — Find and discover — locate code, trace connections
 - `/who` — Check identity
+
+### Oracle Family
+- `/awaken` — Guided Oracle birth ritual
+- `/birth` — Birth certificate
+- `/oracle` — Oracle core
+- `/oracle-family-scan` — Scan the Oracle family
+- `/oracle-soul-sync-update` — Sync soul updates
+- `/oraclenet` — Oracle network
+- `/philosophy` — Review principles
+
+### Communication
+- `/forward` — Forward information
+- `/fyi` — FYI notification
+- `/speak` — Speak as Oracle
+- `/talk-to` — Talk to another Oracle
+- `/merged` — Merged notification
+
+### Work
+- `/deep-research` — Deep research mode
+- `/project` — Project management
+- `/schedule` — Schedule management
+- `/standup` — Daily standup
+- `/watch` — Watch for changes
+- `/where-we-are` — Current location/status
+- `/worktree` — Git worktree management
+
+### Experimental
+- `/feel` — Emotional awareness
+- `/gemini` — Gemini integration
+- `/physical` — Physical world bridge
+- `/about-oracle` — About Oracle
+- `/retrospective` — Full retrospective
