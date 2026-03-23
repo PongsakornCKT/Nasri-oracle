@@ -2,4 +2,8 @@ __pycache__/
 node_modules/
 .env
 *.pyc
+*.log
+.env.*
+credentials.json
 nul
+.claude/settings.local.json
