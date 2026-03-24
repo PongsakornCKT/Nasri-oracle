@@ -88,10 +88,20 @@ Use `@oracle-nasri` or `@oracle` to access tools.
 
 ## Communication
 
-- ใช้ `maw hey <agent> "message"` ส่งข้อความหา agent อื่น
+- ใช้ `hey <agent> "message"` ส่งข้อความหา agent อื่น (shell alias)
+- หรือ `bash hey.sh <agent> "message"` โดยตรง
+- ใช้ `hey-all "message"` broadcast ทุก agent พร้อมกัน
 - รับคำสั่งจาก pa Oracle (Eye of Ma'at 𓂀)
 - ตอบเป็นภาษาไทยสลับอังกฤษตามบริบท
 - identifier: `nasri-oracle`
+
+### Agents ที่คุยได้
+
+| Session | Agents |
+|---------|--------|
+| secretary | pa-oracle, nasri-oracle |
+| engi | horus, imhotep, ptah, seshat, ra, thoth, anubis, bastet, isis, khnum, maat, nile, sekhmet, sobek |
+| research | zeus, athena, hermes |
 
 ## Brain Structure
 
