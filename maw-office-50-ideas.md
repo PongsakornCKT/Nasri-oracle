@@ -90,3 +90,63 @@
 
 ---
 *สรุป: 50 ไอเดียครอบคลุมทั้ง UI, Realtime Analytics, Fleet Monitoring, Infrastructure และ Feature ใหม่ที่สอดคล้องกับสถาปัตยกรรมจริงของ maw-js-server*
+
+---
+
+
+## 🌟 TOP-5 เสนอพี่พง (High Value, Effort S/M, Safe Scope)
+
+กลั่นกรองจาก 50 ไอเดีย โดยคัดเลือกฟีเจอร์ที่ **ตอบโจทย์พี่พงมากที่สุด** (เห็นสถานะชัด ประหยัดเวลา/เงิน) ใช้เวลาทำไม่เกิน 1-2 วัน (Effort S/M) และ **ไม่แตะระบบ production ภายนอก** (ปลอดภัย 100% ทำเฉพาะใน `maw-js-server`):
+
+### 1. #12 Live Cost Calculator & Budget Threshold Alert
+* **ทำไมถึงติด TOP-5**: พี่พงควบคุมค่าใช้จ่าย API เสมอ ฟีเจอร์นี้แสดงยอดเงิน USD รวมต่อวันชัดเจน และเปลี่ยนเป็นสีแดงพร้อมเตือนทันทีเมื่อใช้เกินงบ (เช่น > $10/วัน)
+* **สเก็ตช์วิธีทำ (3 ขั้น)**:
+  1. เพิ่มฟังก์ชันคำนวณ budget limit ใน `src/cost-index.ts` เช็คยอดรวมเทียบกับ threshold ใน `maw.config.json`
+  2. ส่งค่า `overBudget: boolean` และ `budgetLimit: number` ผ่าน API `/api/costs`
+  3. เพิ่ม Badge คำนวณเงินพร้อมสถานะสีแดงเตือนบน `DashboardView.tsx` (ข้างบนสุด)
+* **ความเสี่ยง 1 ข้อ**: การประเมินราคาโมเดลต่างค่ายอาจคลาดเคลื่อนเล็กน้อยหากมีการปรับราคา API จากผู้ให้บริการ ต้องใช้อัตราถัวเฉลี่ย ($8/1M tokens)
+
+### 2. #19 Active Worktree Drift & Uncommitted Changes Counter
+* **ทำไมถึงติด TOP-5**: แก้ปัญหาคลาสสิกของ fleet ที่ agent หรือผู้ใช้ลืม commit หรือทิ้ง worktree ค้างไว้จนงานหายหรือเกิด drift
+* **สเก็ตช์วิธีทำ (3 ขั้น)**:
+  1. ขยาย API `/api/worktrees` ใน `src/worktrees.ts` ให้รัน `git status --porcelain` นับ uncommitted files ในแต่ละ worktree
+  2. ส่งสถิติ `uncommittedCount` และ `lastCommitTime` ออกมาทาง JSON
+  3. แสดงตัวเลขเตือนสีส้มบนแท็บ Worktrees ใน `WorktreeView.tsx` เมื่อมี uncommitted changes > 0
+* **ความเสี่ยง 1 ข้อ**: การรัน `git status` หลาย worktree พร้อมกันอาจชะลอ I/O เล็กน้อยบน WSL หากมี worktree ค้างเกิน 10 ตัว (แก้ไขโดยใส่ cache 10 วินาที)
+
+### 3. #22 Heartbeat & Liveness Probe Monitor
+* **ทำไมถึงติด TOP-5**: พี่พงจะเห็นทันทีว่า Agent ตัวไหนกำลังทำงาน ตัวไหนหลับ หรือตัวไหนค้าง โดยไม่ต้องคอยพิมพ์ `maw peek` เอง
+* **สเก็ตช์วิธีทำ (3 ขั้น)**:
+  1. ปรับ `src/hooks.ts` ให้นับเวลา timestamp ล่าสุดที่ได้รับ heartbeat จาก `/home/po-ch/.oracle/agy-maw-hook.sh`
+  2. เพิ่ม endpoint `/api/fleet/health` คืนค่าสถานะ liveness ของ agent รายตัว (Active / Silent / Stale)
+  3. แสดงสถานะดวงไฟ (Green/Amber/Red) บน `AgentStatusCard` ใน `DashboardView.tsx`
+* **ความเสี่ยง 1 ข้อ**: Agent ที่กำลังรัน I/O หนักหรือรันคำสั่งยาว (>5 นาที) อาจถูกจัดเป็น Silent ชั่วคราว (แก้ไขโดยอ้างอิงสถานะ BUSY ร่วมด้วย)
+
+### 4. #41 Integrated System Health Dashboard (All Local Ports 4000-47779)
+* **ทำไมถึงติด TOP-5**: รวมศูนย์การตรวจเช็ค Service ทั้งหมดในเครื่อง (MAW :4000, Tracker :4100, Enervia API :4201, Gateway :4300, Arra :47779) ไว้ใน Widget เดียว ไม่ต้องเปิด terminal คอย curl เอง
+* **สเก็ตช์วิธีทำ (3 ขั้น)**:
+  1. เพิ่ม background check ใน `src/server.ts` ยิง HTTP GET `/health` หา 5 พอร์ตหลักทุก 30 วินาที
+  2. เก็บสถานะ `online/offline` และ response latency (ms) ไว้ใน memory state
+  3. สร้าง Widget `System Services Status` บนหน้า `DashboardView.tsx` โชว์ไฟสถานะแต่ละ Service
+* **ความเสี่ยง 1 ข้อ**: หาก service บางตัวยังไม่ได้เปิด (เช่น Enervia API :4201) อาจเห็นไฟแดงเตือนตลอดเวลา (แก้ไขโดยเพิ่มปุ่ม Mute Alert สำหรับ service ที่ไม่ได้เปิด)
+
+### 5. #27 Task Claiming & Locking Status Board
+* **ทำไมถึงติด TOP-5**: ลดปัญหางานซ้ำซ้อน 67% จากการที่ agent แย่งกันหยิบงานจาก list เดียวกันตามบทเรียน delegation
+* **สเก็ตช์วิธีทำ (3 ขั้น)**:
+  1. สร้างโครงสร้างเก็บข้อมูล task claims ใน `asks.json` (`taskId`, `claimedBy`, `claimedAt`, `status`)
+  2. เพิ่ม API `POST /api/asks/claim` ให้ agent สามารถส่งคำร้องจองงานก่อนเริ่มทำ
+  3. แสดงการ์ด Task ใน `MissionControl.tsx` พร้อม Avatar ของ agent ที่ถือครองงานนั้นๆ
+* **ความเสี่ยง 1 ข้อ**: หาก agent หลุดการทำงานกลางค้าง งานจะถูก lock ค้างไว้ (แก้ไขโดยใส่ระบบ Auto-release lock หลังผ่านไป 30 นาที)
+
+---
+
+## 💡 ข้อเสนอแนะงานเพิ่มเติมสำหรับพี่พง (Beyond Dashboard)
+
+หากพี่พงต้องการให้ Nasri ช่วยลุยงานต่อเพื่อเพิ่มความเรียบร้อยของระบบ ขอเสนอ 2 งานปลอดภัยที่มีคุณค่าสูงครับ:
+
+1. **สร้าง Script ตรวจสอบ Live-vs-Git Drift อัตโนมัติ (`scripts/check-survey-drift.sh`)**:
+   - *คุณค่า*: ป้องกันปัญหา Live-ahead drift ของ `survey.enervia` ที่เคยทำให้ฟีเจอร์หายทั้งบริษัท
+   - *วิธีทำ*: สร้าง script ดึง `functions.php` และ `survey.php` จาก FTPS มา diff แบบ `--strip-trailing-cr` เทียบกับ `main` branch บน local โดยไม่มีการ overwrite ใดๆ ปลอดภัย 100%
+
+2. **สร้าง Unified Test Runner CLI (`scripts/run-fleet-tests.sh`)**:
+   - *คุณค่า*: ช่วยให้พี่พง หรือ agent รันเทส JS (`vitest`) และ PHP (`PHPUnit`) ได้ในคำสั่งเดียว พร้อมกรองผลลัพธ์เทียบกับ 10 Baseline Fails เดิมบน CI เพื่อยืนยันว่าไม่มี regression ใหม่เกิดขึ้นก่อน merge PR
