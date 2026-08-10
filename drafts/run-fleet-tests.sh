@@ -30,20 +30,16 @@ DRY_RUN=true
 SUITE="all"
 
 # --- Encoded CI Baseline Failures (10 Known Legacy Fails) ---
-# Skill testing-guide: "CI enervia-survey มีเทสแดงค้างเดิม 10 ตัว"
-BASELINE_FAILS=(
-  "DashboardStatsTest::test_office_stats"
-  "DashboardStatsTest::test_crew_stats"
-  "DashboardStatsTest::test_sale_commission_calc"
-  "DashboardStatsTest::test_payroll_breakdown"
-  "DashboardStatsTest::test_monthly_aggregate"
-  "DashboardStatsTest::test_annual_aggregate"
-  "SurveyStatusEnumTest::test_status_enum_values"
-  "SurveyStatusEnumTest::test_status_transition_rules"
-  "WfPagesClampTest::test_pages_clamp_lower_bound"
-  "WfPagesClampTest::test_pages_clamp_upper_bound"
+# Skill testing-guide: "CI enervia-survey มีเทสแดงค้างเดิม 10 ตัว: DashboardStatsx6, SurveyStatusEnumx2, WfPagesClampx2"
+# TODO: Sync exact individual method names from latest CI run log before executing against live CI.
+declare -A BASELINE_CLASS_FAILS=(
+  ["DashboardStatsTest"]=6
+  ["SurveyStatusEnumTest"]=2
+  ["WfPagesClampTest"]=2
 )
-BASELINE_FAIL_COUNT=${#BASELINE_FAILS[@]}
+BASELINE_CLASSES=("DashboardStatsTest" "SurveyStatusEnumTest" "WfPagesClampTest")
+BASELINE_FAIL_COUNT=10
+
 
 # --- Usage Function ---
 show_help() {
@@ -118,8 +114,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   echo -e "[INFO] Checking baseline diff against 10 known CI failures..."
   echo ""
   echo -e "Known Baseline Failures Encoded:"
-  for fail in "${BASELINE_FAILS[@]}"; do
-    echo "  - $fail"
+  for cls in "${BASELINE_CLASSES[@]}"; do
+    echo "  - $cls (${BASELINE_CLASS_FAILS[$cls]} failures)"
   done
   echo ""
   echo -e "${GREEN}====================================================${NC}"
