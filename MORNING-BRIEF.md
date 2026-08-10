@@ -14,7 +14,7 @@
 - **50 Dashboard Ideas & Wy Guide**: คิด 50 ไอเดียปรับปรุง MAW Office Dashboard พร้อมคู่มือสอน wy 58 บรรทัด (`8b69405`)
 - **TOP-5 Recommendations**: กลั่นกรอง TOP-5 ไอเดียคุ้มค่าสูงสุด + 2 ข้อเสนอแนะสคริปต์ (`07c311f`)
 - **Production-grade CLI Drafts**: สร้าง `drafts/check-survey-drift.sh` และ `drafts/run-fleet-tests.sh` พร้อม `--dry-run` default (`0c421e9`)
-- **CI Baseline Pattern Alignment**: ปรับแก้ `run-fleet-tests.sh` เป็น Class-level baseline ตามความรู้จริงของ fleet (`0c421e9`)
+- **CI Baseline Pattern Alignment**: ปรับแก้ `run-fleet-tests.sh` เป็น Class-level baseline ตามความรู้จริงของ fleet (`67f3997`)
 
 ---
 
