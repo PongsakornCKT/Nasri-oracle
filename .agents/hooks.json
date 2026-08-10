@@ -1,0 +1,11 @@
+{
+  "maw-heartbeat": {
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "/home/po-ch/.oracle/agy-maw-hook.sh",
+        "timeout": 5
+      }
+    ]
+  }
+}
