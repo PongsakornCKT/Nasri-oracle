@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fleet Heartbeat & Liveness Widget</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Thai+Looped:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #04040a;
+      --card-bg: #0a0a14;
+      --border: rgba(255, 255, 255, 0.1);
+      --border-hover: rgba(255, 255, 255, 0.22);
+      --gold: #f59e0b;
+      --green: #22c55e;
+      --green-glow: 0 0 6px rgba(34, 197, 94, 0.6);
+      --amber: #f59e0b;
+      --amber-glow: 0 0 6px rgba(245, 158, 11, 0.6);
+      --red: #ef4444;
+      --red-glow: 0 0 6px rgba(239, 68, 68, 0.6);
+      --gray: #64748b;
+      --text: #f3f4f6;
+      --text-dim: #9ca3af;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Sans Thai Looped', system-ui, -apple-system, sans-serif;
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .widget-card {
+      width: 100%;
+      max-width: 580px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--gold);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .summary-group {
+      display: flex;
+      gap: 6px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .summary-pill {
+      padding: 2px 8px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+    }
+
+    .summary-pill.active { background: rgba(34, 197, 94, 0.12); color: var(--green); border-color: rgba(34, 197, 94, 0.3); }
+    .summary-pill.silent { background: rgba(245, 158, 11, 0.12); color: var(--amber); border-color: rgba(245, 158, 11, 0.3); }
+    .summary-pill.stale { background: rgba(239, 68, 68, 0.12); color: var(--red); border-color: rgba(239, 68, 68, 0.3); }
+    .summary-pill.no-hook { background: rgba(100, 116, 139, 0.12); color: var(--gray); border-color: rgba(100, 116, 139, 0.3); }
+
+    .btn-refresh {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-refresh:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+
+    .agent-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .agent-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .agent-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--border-hover);
+    }
+
+    .agent-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* ── CRITICAL: Actual CSS Circle Status Dot ── */
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%; /* Genuine CSS circle */
+      flex-shrink: 0;
+      background: var(--gray);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot.Active { background: var(--green); box-shadow: var(--green-glow); }
+    .status-dot.Silent { background: var(--amber); box-shadow: var(--amber-glow); }
+    .status-dot.Stale { background: var(--red); box-shadow: var(--red-glow); }
+    .status-dot.no-heartbeat { background: var(--gray); box-shadow: none; }
+
+    .agent-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .room-badge {
+      font-size: 9px;
+      font-family: 'IBM Plex Mono', monospace;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-dim);
+    }
+
+    .agent-right {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .time-Active { color: var(--green); }
+    .time-Silent { color: var(--amber); }
+    .time-Stale { color: var(--red); }
+    .time-no-heartbeat { color: var(--gray); }
+
+    .card-footer {
+      margin-top: 12px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: 'IBM Plex Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="widget-card">
+    <div class="card-header">
+      <div class="card-title">
+        <span>💓 Fleet Heartbeat</span>
+        <div class="summary-group">
+          <span class="summary-pill active" id="pillActive">0 Active</span>
+          <span class="summary-pill silent" id="pillSilent">0 Silent</span>
+          <span class="summary-pill stale" id="pillStale">0 Stale</span>
+        </div>
+      </div>
+      <button class="btn-refresh" onclick="manualRefresh()">
+        <span id="spinIcon">↻</span> Refresh
+      </button>
+    </div>
+
+    <!-- Agent List -->
+    <div class="agent-list" id="agentList">
+      <!-- Dynamic Rows -->
+    </div>
+
+    <!-- Footer -->
+    <div class="card-footer">
+      <span>Auto-polling every 30s</span>
+      <span id="lastUpdated">Checking...</span>
+    </div>
+  </div>
+
+  <script>
+    // Fallback Mock Data for local preview (file://)
+    const MOCK_DATA = {
+      agents: [
+        { agent: "pa-oracle", room: "secretary", hasHook: true, lastSeenAt: new Date().toISOString(), ageSeconds: 45, status: "Active" },
+        { agent: "nasri-oracle", room: "secretary", hasHook: true, lastSeenAt: new Date().toISOString(), ageSeconds: 4, status: "Active" },
+        { agent: "wy-oracle", room: "secretary", hasHook: false, lastSeenAt: null, ageSeconds: null, status: "no-heartbeat" },
+        { agent: "horus", room: "engi", hasHook: true, lastSeenAt: null, ageSeconds: null, status: "Stale" },
+        { agent: "imhotep", room: "engi", hasHook: true, lastSeenAt: null, ageSeconds: null, status: "Stale" }
+      ],
+      total: 5,
+      active: 2,
+      silent: 0,
+      stale: 2,
+      noHeartbeat: 1,
+      checkedAt: new Date().toISOString()
+    };
+
+    function formatRelativeThai(ageSec, status) {
+      if (status === 'no-heartbeat') return 'ไม่มี heartbeat';
+      if (ageSec === null || ageSec === undefined || status === 'Stale') return 'ไม่พบการเคลื่อนไหว';
+      if (ageSec < 10) return 'เมื่อครู่';
+      if (ageSec < 60) return `${ageSec} วินาทีที่แล้ว`;
+      const min = Math.floor(ageSec / 60);
+      if (min < 60) return `${min} นาทีที่แล้ว`;
+      const hr = Math.floor(min / 60);
+      return `${hr} ชั่วโมงที่แล้ว`;
+    }
+
+    let currentData = MOCK_DATA;
+
+    function render() {
+      if (!currentData || !currentData.agents) return;
+
+      document.getElementById('pillActive').textContent = `${currentData.active || 0} Active`;
+      document.getElementById('pillSilent').textContent = `${currentData.silent || 0} Silent`;
+      document.getElementById('pillStale').textContent = `${currentData.stale || 0} Stale`;
+
+      const listEl = document.getElementById('agentList');
+      listEl.innerHTML = '';
+
+      currentData.agents.forEach(a => {
+        const row = document.createElement('div');
+        row.className = 'agent-row';
+
+        const dotClass = `status-dot ${a.status}`;
+        const timeClass = `time-${a.status}`;
+        const relativeText = formatRelativeThai(a.ageSeconds, a.status);
+
+        row.innerHTML = `
+          <div class="agent-left">
+            <div class="${dotClass}" title="${a.status}"></div>
+            <div class="agent-name">${a.agent}</div>
+            <span class="room-badge">${a.room}</span>
+          </div>
+          <div class="agent-right ${timeClass}">
+            ${relativeText}
+          </div>
+        `;
+        listEl.appendChild(row);
+      });
+
+      const updated = currentData.checkedAt ? new Date(currentData.checkedAt).toTimeString().split(' ')[0] : '--:--:--';
+      document.getElementById('lastUpdated').textContent = `Updated ${updated}`;
+    }
+
+    async function fetchFleetHealth(forceRefresh = false) {
+      try {
+        const url = `/api/fleet/health${forceRefresh ? '?refresh=1' : ''}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        currentData = await res.json();
+      } catch (err) {
+        currentData = MOCK_DATA;
+        currentData.checkedAt = new Date().toISOString();
+      } finally {
+        render();
+      }
+    }
+
+    async function manualRefresh() {
+      const icon = document.getElementById('spinIcon');
+      icon.style.transform = 'rotate(360deg)';
+      icon.style.transition = 'transform 0.5s ease';
+      await fetchFleetHealth(true);
+      setTimeout(() => { icon.style.transform = 'none'; icon.style.transition = 'none'; }, 500);
+    }
+
+    fetchFleetHealth();
+    setInterval(fetchFleetHealth, 30000);
+  </script>
+</body>
+</html>

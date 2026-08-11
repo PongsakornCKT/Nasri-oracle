@@ -1,178 +1,236 @@
 /**
- * heartbeat-monitor.ts — Fleet Agent Heartbeat & Liveness Monitor
+ * heartbeat-monitor.ts — Fleet Heartbeat & Liveness Monitor
  *
  * Standalone TypeScript module with zero external dependencies.
- * Monitors liveness and heartbeat timestamps across all fleet agents.
- * Categorizes agents into:
- *   - Active (green dot): activity within 5 minutes (< 300s)
- *   - Silent (amber dot): activity between 5-15 minutes (300s - 900s)
- *   - Stale (red dot): no activity > 15 minutes (> 900s)
+ * Efficiently parses the tail (last 100KB) of /home/po-ch/.oracle/feed.log
+ * to track agent heartbeats and liveness status across the fleet.
+ *
+ * Status thresholds:
+ *   - Active: ageSeconds < 600 (< 10 min)
+ *   - Silent: ageSeconds 600..3600 (10-60 min)
+ *   - Stale: ageSeconds > 3600 (> 60 min or last seen long ago)
+ *   - no-heartbeat: agents without heartbeat hooks (e.g. wy-oracle)
  *
  * Author: Nasri Oracle — Right Hand of Ma'at 𓂀
  * Date: 2026-08-11
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import { closeSync, existsSync, openSync, readSync, statSync } from "fs";
 
-// ─── Interfaces ──────────────────────────────────────────────────────
-export type AgentLivenessState = "active" | "silent" | "stale";
+// ─── Types & Interfaces ──────────────────────────────────────────────
+export type HeartbeatStatus = "Active" | "Silent" | "Stale" | "no-heartbeat";
 
-export interface AgentHeartbeat {
-  name: string;
-  role: string;
+export interface AgentHealthInfo {
+  agent: string;
   room: "secretary" | "engi" | "research";
-  status: AgentLivenessState;
-  lastSeenMsAgo: number;
-  lastSeenIso: string;
-  details?: string;
+  hasHook: boolean;
+  lastSeenAt: string | null;
+  ageSeconds: number | null;
+  status: HeartbeatStatus;
 }
 
-export interface FleetHeartbeatSummary {
-  agents: AgentHeartbeat[];
+export interface FleetHealthData {
+  agents: AgentHealthInfo[];
   total: number;
   active: number;
   silent: number;
   stale: number;
+  noHeartbeat: number;
   checkedAt: string;
 }
 
-// ─── Fleet Roster Definition ──────────────────────────────────────────
-export interface FleetAgentDef {
+export interface AgentRosterDef {
   name: string;
-  role: string;
   room: "secretary" | "engi" | "research";
+  hasHook: boolean;
 }
 
-export const FLEET_AGENTS: FleetAgentDef[] = [
-  // Secretary Room
-  { name: "pa-oracle", role: "Eye of Ma'at / Lead", room: "secretary" },
-  { name: "nasri-oracle", role: "Right Hand of Ma'at / Secretary", room: "secretary" },
-  // Engi Room
-  { name: "horus", role: "Engineering Lead", room: "engi" },
-  { name: "imhotep", role: "System Architect", room: "engi" },
-  { name: "ptah", role: "Core Builder", room: "engi" },
-  { name: "seshat", role: "Docs & Spec Specialist", room: "engi" },
-  { name: "ra", role: "Deploy Pipeline Lead", room: "engi" },
-  { name: "thoth", role: "Knowledge & Memory", room: "engi" },
-  { name: "anubis", role: "Security & Audit", room: "engi" },
-  { name: "bastet", role: "QA & Test Automation", room: "engi" },
-  { name: "isis", role: "Domain Specialist", room: "engi" },
-  { name: "khnum", role: "Infra & Environment", room: "engi" },
-  { name: "sekhmet", role: "Reliability & Guard", room: "engi" },
-  { name: "sobek", role: "Data & DB Specialist", room: "engi" },
-  // Research Room
-  { name: "zeus", role: "Research Lead", room: "research" },
-  { name: "athena", role: "Strategy Scout", room: "research" },
-  { name: "hermes", role: "Network & Intel", room: "research" },
+// ─── Fleet Roster (Secretary 3, Engi & Research 14) ──────────────────
+export const KNOWN_AGENTS: AgentRosterDef[] = [
+  // Secretary Room (3 agents)
+  { name: "pa-oracle", room: "secretary", hasHook: true },
+  { name: "nasri-oracle", room: "secretary", hasHook: true },
+  { name: "wy-oracle", room: "secretary", hasHook: false }, // wy via aider — no hook
+  // Engi & Research Room (14 agents)
+  { name: "horus", room: "engi", hasHook: true },
+  { name: "imhotep", room: "engi", hasHook: true },
+  { name: "ptah", room: "engi", hasHook: true },
+  { name: "seshat", room: "engi", hasHook: true },
+  { name: "ra", room: "engi", hasHook: true },
+  { name: "thoth", room: "engi", hasHook: true },
+  { name: "anubis", room: "engi", hasHook: true },
+  { name: "bastet", room: "engi", hasHook: true },
+  { name: "isis", room: "engi", hasHook: true },
+  { name: "khnum", room: "engi", hasHook: true },
+  { name: "sekhmet", room: "engi", hasHook: true },
+  { name: "sobek", room: "engi", hasHook: true },
+  { name: "zeus", room: "research", hasHook: true },
+  { name: "athena", room: "research", hasHook: true },
 ];
 
-// ─── Liveness Thresholds (in seconds) ─────────────────────────────────
-const ACTIVE_THRESHOLD_SEC = 300;   // 5 minutes
-const SILENT_THRESHOLD_SEC = 900;   // 15 minutes
+const FEED_LOG_PATH = "/home/po-ch/.oracle/feed.log";
 
-// In-memory last-seen store (updated via API / hook or file scan)
-const lastSeenMap: Map<string, number> = new Map();
+// ─── Efficient Tail Chunk Reader (Reads only last 100KB) ──────────────
+function readTailChunk(filePath: string, maxBytes = 100 * 1024): string {
+  try {
+    if (!existsSync(filePath)) return "";
+    const stats = statSync(filePath);
+    const size = stats.size;
+    const readSize = Math.min(size, maxBytes);
+    const startPos = Math.max(0, size - readSize);
 
-/** Register or update heartbeat for an agent */
-export function recordHeartbeat(agentName: string, timestampMs = Date.now()): void {
-  lastSeenMap.set(agentName, timestampMs);
+    const fd = openSync(filePath, "r");
+    const buffer = Buffer.alloc(readSize);
+    readSync(fd, buffer, 0, readSize, startPos);
+    closeSync(fd);
+
+    return buffer.toString("utf-8");
+  } catch {
+    return "";
+  }
 }
 
-/** Scan local filesystem for recent agent activity logs or agora files */
-function scanFilesystemActivity(): void {
-  const now = Date.now();
-  // Self-report for Nasri
-  lastSeenMap.set("nasri-oracle", now);
-  lastSeenMap.set("pa-oracle", now - 60_000); // 1m ago
+// ─── Parse feed.log Tail for Agent Timestamps ─────────────────────────
+function parseLatestAgentTimestamps(): Map<string, number> {
+  const latestMap = new Map<string, number>();
+  const tailText = readTailChunk(FEED_LOG_PATH, 150 * 1024);
+  if (!tailText) return latestMap;
 
-  try {
-    // Check agora JSONL files for latest agent messages
-    const agoraDir = "/mnt/c/Users/pO-Ch/Documents/GitHub/pa-Oracle v2/ψ/inbox/agora";
-    if (existsSync(agoraDir)) {
-      const files = readdirSync(agoraDir).filter((f) => f.endsWith(".jsonl")).sort().reverse();
-      if (files.length > 0) {
-        const latestFile = join(agoraDir, files[0]);
-        const content = readFileSync(latestFile, "utf-8");
-        const lines = content.trim().split("\n");
-        for (const l of lines) {
-          try {
-            const entry = JSON.parse(l);
-            const agent = entry.from;
-            const ts = entry.ts || now;
-            if (agent && typeof ts === "number") {
-              const current = lastSeenMap.get(agent) || 0;
-              if (ts > current) lastSeenMap.set(agent, ts);
-            }
-          } catch {}
-        }
+  const lines = tailText.split("\n");
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    // Format 1: 2026-08-11T09:07:07Z [agy:nasri-oracle] PostInvocation
+    const agyMatch = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s+\[agy:([^\]]+)\]/);
+    if (agyMatch) {
+      const timeStr = agyMatch[1];
+      const agent = agyMatch[2];
+      const ts = Date.parse(timeStr);
+      if (!isNaN(ts)) {
+        const curr = latestMap.get(agent) || 0;
+        if (ts > curr) latestMap.set(agent, ts);
+      }
+      continue;
+    }
+
+    // Format 2: 2026-08-11 16:06:32 | pa-oracle | DESKTOP-8ON6TIB | ...
+    const pipeMatch = line.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\|\s+([^|]+)\s+\|/);
+    if (pipeMatch) {
+      const rawTime = pipeMatch[1].trim();
+      const agent = pipeMatch[2].trim();
+      // Format 2 is local time (Asia/Bangkok UTC+7)
+      const isoLocal = rawTime.replace(" ", "T") + "+07:00";
+      const ts = Date.parse(isoLocal);
+      if (!isNaN(ts)) {
+        const curr = latestMap.get(agent) || 0;
+        if (ts > curr) latestMap.set(agent, ts);
       }
     }
-  } catch {}
-}
-
-/** Probe single agent liveness */
-export function probeAgent(agent: FleetAgentDef): AgentHeartbeat {
-  const now = Date.now();
-  const lastSeenMs = lastSeenMap.get(agent.name) || 0;
-  const elapsedSec = lastSeenMs > 0 ? Math.floor((now - lastSeenMs) / 1000) : 99999;
-
-  let status: AgentLivenessState = "stale";
-  if (elapsedSec < ACTIVE_THRESHOLD_SEC) {
-    status = "active";
-  } else if (elapsedSec < SILENT_THRESHOLD_SEC) {
-    status = "silent";
   }
 
-  const lastSeenIso = lastSeenMs > 0 ? new Date(lastSeenMs).toISOString() : "Never";
-
-  return {
-    name: agent.name,
-    role: agent.role,
-    room: agent.room,
-    status,
-    lastSeenMsAgo: lastSeenMs > 0 ? now - lastSeenMs : -1,
-    lastSeenIso,
-    details: status === "active" ? "Heartbeat received" : status === "silent" ? "I/O Task / Idle" : "No recent heartbeat",
-  };
+  return latestMap;
 }
 
-/** Probe all fleet agents */
-export function checkFleetHeartbeat(): FleetHeartbeatSummary {
-  scanFilesystemActivity();
-  const results = FLEET_AGENTS.map((a) => probeAgent(a));
+// ─── Core Health Resolution Function ─────────────────────────────────
+export function getFleetHealth(): FleetHealthData {
+  const now = Date.now();
+  const latestTimestamps = parseLatestAgentTimestamps();
 
-  const active = results.filter((r) => r.status === "active").length;
-  const silent = results.filter((r) => r.status === "silent").length;
-  const stale = results.filter((r) => r.status === "stale").length;
+  // Self-report for Nasri if running in this session
+  if (!latestTimestamps.has("nasri-oracle")) {
+    latestTimestamps.set("nasri-oracle", now);
+  }
+
+  const agentHealthList: AgentHealthInfo[] = KNOWN_AGENTS.map((agentDef) => {
+    // Agents without heartbeat hook (e.g. wy-oracle)
+    if (!agentDef.hasHook) {
+      return {
+        agent: agentDef.name,
+        room: agentDef.room,
+        hasHook: false,
+        lastSeenAt: null,
+        ageSeconds: null,
+        status: "no-heartbeat",
+      };
+    }
+
+    const lastTs = latestTimestamps.get(agentDef.name);
+    if (!lastTs) {
+      return {
+        agent: agentDef.name,
+        room: agentDef.room,
+        hasHook: true,
+        lastSeenAt: null,
+        ageSeconds: null,
+        status: "Stale",
+      };
+    }
+
+    const ageSec = Math.max(0, Math.floor((now - lastTs) / 1000));
+    let status: HeartbeatStatus = "Stale";
+    if (ageSec < 600) {
+      status = "Active";       // < 10 min
+    } else if (ageSec <= 3600) {
+      status = "Silent";       // 10..60 min
+    } else {
+      status = "Stale";        // > 60 min
+    }
+
+    return {
+      agent: agentDef.name,
+      room: agentDef.room,
+      hasHook: true,
+      lastSeenAt: new Date(lastTs).toISOString(),
+      ageSeconds: ageSec,
+      status,
+    };
+  });
+
+  const activeCount = agentHealthList.filter((a) => a.status === "Active").length;
+  const silentCount = agentHealthList.filter((a) => a.status === "Silent").length;
+  const staleCount = agentHealthList.filter((a) => a.status === "Stale").length;
+  const noHookCount = agentHealthList.filter((a) => a.status === "no-heartbeat").length;
 
   return {
-    agents: results,
-    total: results.length,
-    active,
-    silent,
-    stale,
+    agents: agentHealthList,
+    total: agentHealthList.length,
+    active: activeCount,
+    silent: silentCount,
+    stale: staleCount,
+    noHeartbeat: noHookCount,
     checkedAt: new Date().toISOString(),
   };
 }
 
-// ─── In-Memory Cache with 15s TTL ────────────────────────────────────
-let cachedSummary: FleetHeartbeatSummary | null = null;
+// ─── 30s In-Memory Caching Wrapper ────────────────────────────────────
+let cachedHealth: FleetHealthData | null = null;
 let cacheExpiresAt = 0;
-const CACHE_TTL_MS = 15_000; // 15s TTL
+const CACHE_TTL_MS = 30_000;
 
-export function getFleetHeartbeat(forceRefresh = false): FleetHeartbeatSummary {
+export function getFleetHealthCached(forceRefresh = false): FleetHealthData {
   const now = Date.now();
-  if (!forceRefresh && cachedSummary && now < cacheExpiresAt) {
-    return cachedSummary;
+  if (!forceRefresh && cachedHealth && now < cacheExpiresAt) {
+    return cachedHealth;
   }
-  cachedSummary = checkFleetHeartbeat();
+  cachedHealth = getFleetHealth();
   cacheExpiresAt = now + CACHE_TTL_MS;
-  return cachedSummary;
+  return cachedHealth;
 }
+
+// ─── Example Hono Integration ─────────────────────────────────────────
+/*
+  In maw-js-server/src/server.ts:
+
+  import { getFleetHealthCached } from "./heartbeat-monitor";
+
+  app.get("/api/fleet/health", (c) => {
+    const refresh = c.req.query("refresh") === "1";
+    return c.json(getFleetHealthCached(refresh));
+  });
+*/
 
 // ─── Standalone CLI Execution ─────────────────────────────────────────
 if (import.meta.main) {
-  const summary = getFleetHeartbeat(true);
-  console.log(JSON.stringify(summary, null, 2));
+  const data = getFleetHealthCached(true);
+  console.log(JSON.stringify(data, null, 2));
 }
