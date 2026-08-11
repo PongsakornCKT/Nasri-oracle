@@ -37,14 +37,17 @@ const DATA_DIR = join(import.meta.dir, "../data");
 const CLAIMS_FILE_PATH = join(DATA_DIR, "task-claims.json");
 const AUTO_RELEASE_MS = 30 * 60 * 1000; // 30 minutes TTL
 
-/** Atomic write helper: writes to .tmp file then renames to avoid corruption */
+/**
+ * Atomic write helper: writes to CLAIMS_FILE_PATH + ".tmp" first,
+ * then renames to CLAIMS_FILE_PATH to prevent file corruption if interrupted.
+ */
 function atomicWriteJson(filePath: string, data: any): void {
   try {
     const dir = dirname(filePath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
-    const tmpPath = `${filePath}.tmp.${Date.now()}`;
+    const tmpPath = `${filePath}.tmp`;
     const content = JSON.stringify(data, null, 2);
     writeFileSync(tmpPath, content, "utf-8");
     renameSync(tmpPath, filePath);
@@ -174,7 +177,7 @@ export function completeTask(taskId: string, agent: string): ClaimResult {
 
   app.post("/api/claims/claim", async (c) => {
     const { taskId, title, agent } = await c.req.json().catch(() => ({}));
-    if (!taskId || !agent) return c.json({ error: "taskId and agent required" }, 400);
+    if (!taskId || !agent) return c.json({ ok: false, error: "taskId and agent required" }, 400);
     const res = claimTask(taskId, title, agent);
     if (!res.ok) return c.json(res, 409); // 409 Conflict
     return c.json(res);
@@ -182,13 +185,13 @@ export function completeTask(taskId: string, agent: string): ClaimResult {
 
   app.post("/api/claims/release", async (c) => {
     const { taskId, agent } = await c.req.json().catch(() => ({}));
-    if (!taskId || !agent) return c.json({ error: "taskId and agent required" }, 400);
+    if (!taskId || !agent) return c.json({ ok: false, error: "taskId and agent required" }, 400);
     return c.json(releaseTask(taskId, agent));
   });
 
   app.post("/api/claims/complete", async (c) => {
     const { taskId, agent } = await c.req.json().catch(() => ({}));
-    if (!taskId || !agent) return c.json({ error: "taskId and agent required" }, 400);
+    if (!taskId || !agent) return c.json({ ok: false, error: "taskId and agent required" }, 400);
     return c.json(completeTask(taskId, agent));
   });
 */
@@ -199,18 +202,18 @@ if (import.meta.main) {
   console.log("   Task Claims Store — Chunk A Collision Test      ");
   console.log("====================================================");
 
-  const testTaskId = "T-101";
+  const testTaskId = "task-22";
 
-  console.log("\n[TEST 1] Agent 1 ('nasri-oracle') claims task T-101...");
-  const res1 = claimTask(testTaskId, "Phase 5 Task Claiming (#27)", "nasri-oracle");
+  console.log("\n[TEST 1] pa-oracle claims task-22...");
+  const res1 = claimTask(testTaskId, "Heartbeat & Liveness Monitor (#22)", "pa-oracle");
   console.log("Result 1:", JSON.stringify(res1, null, 2));
 
-  console.log("\n[TEST 2] Agent 2 ('pa-oracle') attempts to claim same task T-101...");
-  const res2 = claimTask(testTaskId, "Phase 5 Task Claiming (#27)", "pa-oracle");
-  console.log("Result 2 (Collision Expected):", JSON.stringify(res2, null, 2));
+  console.log("\n[TEST 2] wy-oracle attempts to claim task-22 (Collision Expected)...");
+  const res2 = claimTask(testTaskId, "Heartbeat & Liveness Monitor (#22)", "wy-oracle");
+  console.log("Result 2:", JSON.stringify(res2, null, 2));
 
-  if (!res2.ok && res2.holder === "nasri-oracle") {
-    console.log("\n✅ Claim Collision Test PASSED! Correctly rejected with holder: 'nasri-oracle'");
+  if (!res2.ok && res2.holder === "pa-oracle") {
+    console.log("\n✅ Claim Collision Test PASSED! Correctly rejected with holder: 'pa-oracle'");
   } else {
     console.log("\n❌ Claim Collision Test FAILED!");
   }
