@@ -1,0 +1,11 @@
+--- office/src/components/DashboardView.tsx
++++ office/src/components/DashboardView.tsx
+@@ -7,2 +7,3 @@
+ import { SecurityCard } from "./SecurityCard";
++import { SystemHealthWidget } from "./SystemHealthWidget";
+
+@@ -620,2 +621,6 @@
+
++      {/* System Health Services Widget (#41) */}
++      <SystemHealthWidget />
++

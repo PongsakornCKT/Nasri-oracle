@@ -1,0 +1,15 @@
+--- src/server.ts
++++ src/server.ts
+@@ -8,2 +8,3 @@
+ import type { WSData } from "./types";
++import { getHealth } from "./health-monitor";
+
+@@ -260,2 +261,9 @@
+
++// ── System Health Monitor API (#41) ──────────────────────────────────
++app.get("/api/system/health", async (c) => {
++  const refresh = c.req.query("refresh") === "1";
++  const health = await getHealth(refresh);
++  return c.json(health);
++});
++
