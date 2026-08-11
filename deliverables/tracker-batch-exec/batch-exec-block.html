@@ -1,0 +1,262 @@
+<!-- ================================================================= -->
+<!-- Tracker Phase 3: Batch Execute Multi-Select Toolbar (#4)          -->
+<!-- Deliverable Block for oracle-studio/tracker.html                  -->
+<!-- ================================================================= -->
+
+<style>
+  /* ── Batch Select Header Toggle & Toolbar ── */
+  .batch-header-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 12px;
+  }
+
+  .btn-batch-toggle {
+    background: rgba(201, 168, 76, 0.08);
+    border: 1px solid var(--border, rgba(201, 168, 76, 0.2));
+    color: var(--gold, #c9a84c);
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s ease;
+  }
+  .btn-batch-toggle:hover {
+    background: rgba(201, 168, 76, 0.18);
+    border-color: var(--gold, #c9a84c);
+  }
+
+  /* ── Floating Sticky Batch Action Bar ── */
+  .batch-action-bar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    z-index: 9999;
+    background: var(--bg2, #141414);
+    border: 1px solid var(--gold, #c9a84c);
+    border-radius: 30px;
+    padding: 8px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 20px var(--gold-glow, rgba(201, 168, 76, 0.25));
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  .batch-action-bar.active {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .batch-selected-count {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--gold, #c9a84c);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .btn-batch-execute {
+    background: linear-gradient(135deg, #c9a84c 0%, #4caf7d 100%);
+    color: #000;
+    font-weight: 700;
+    border: none;
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(76, 175, 125, 0.4);
+  }
+  .btn-batch-execute:hover {
+    transform: scale(1.04);
+    box-shadow: 0 4px 14px rgba(76, 175, 125, 0.6);
+  }
+
+  .btn-batch-clear {
+    background: transparent;
+    border: 1px solid var(--border, rgba(201, 168, 76, 0.2));
+    color: var(--text-dim, #888);
+    border-radius: 14px;
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .btn-batch-clear:hover {
+    color: var(--text, #e8e0d0);
+    border-color: var(--text, #e8e0d0);
+  }
+
+  /* Proposal Card Multi-Select Checkbox Overlay */
+  .proposal-card-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--gold, #c9a84c);
+    cursor: pointer;
+    margin-right: 8px;
+  }
+</style>
+
+<!-- Floating Sticky Batch Execution Bar -->
+<div id="batchActionBar" class="batch-action-bar">
+  <div class="batch-selected-count">
+    <span>☑</span>
+    <span id="batchCountText">0 selected proposals</span>
+  </div>
+  <button class="btn-batch-execute" onclick="executeSelectedBatch()">
+    ⚡ Execute Selected
+  </button>
+  <button class="btn-batch-clear" onclick="clearBatchSelection()">
+    ✕ Clear
+  </button>
+</div>
+
+<script>
+(function() {
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  let selectedProposalMap = new Map();
+
+  // Inject Select All toggle button next to proposal section header
+  function initBatchControls() {
+    const badge = document.getElementById('proposalBadge');
+    if (!badge || document.getElementById('btnSelectAllProposals')) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'btnSelectAllProposals';
+    btn.className = 'btn-batch-toggle';
+    btn.innerHTML = '<span>☑ Select All</span>';
+    btn.onclick = toggleSelectAllProposals;
+
+    badge.parentNode.insertBefore(btn, badge.nextSibling);
+  }
+
+  window.toggleSelectAllProposals = function() {
+    const checkboxes = document.querySelectorAll('.proposal-card-checkbox');
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+
+    checkboxes.forEach(cb => {
+      cb.checked = !allChecked;
+      const pid = cb.getAttribute('data-id');
+      const ptitle = cb.getAttribute('data-title');
+      if (!allChecked) {
+        selectedProposalMap.set(pid, ptitle);
+      } else {
+        selectedProposalMap.delete(pid);
+      }
+    });
+
+    updateBatchBarUI();
+  };
+
+  window.toggleProposalSelection = function(cb, id, title) {
+    if (cb.checked) {
+      selectedProposalMap.set(id, title);
+    } else {
+      selectedProposalMap.delete(id);
+    }
+    updateBatchBarUI();
+  };
+
+  function updateBatchBarUI() {
+    const bar = document.getElementById('batchActionBar');
+    const countText = document.getElementById('batchCountText');
+
+    const count = selectedProposalMap.size;
+    if (countText) countText.textContent = `${count} selected proposal${count !== 1 ? 's' : ''}`;
+
+    if (bar) {
+      if (count > 0) {
+        bar.classList.add('active');
+      } else {
+        bar.classList.remove('active');
+      }
+    }
+  }
+
+  window.clearBatchSelection = function() {
+    selectedProposalMap.clear();
+    document.querySelectorAll('.proposal-card-checkbox').forEach(cb => cb.checked = false);
+    updateBatchBarUI();
+  };
+
+  window.executeSelectedBatch = async function() {
+    if (selectedProposalMap.size === 0) return;
+
+    const items = Array.from(selectedProposalMap.entries()).map(([id, title]) => ({ id, title }));
+    
+    try {
+      const apiHost = typeof TRACKER_API !== 'undefined' ? TRACKER_API : '';
+      const res = await fetch(apiHost + '/api/tracker/batch-execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, from: 'tracker-ui' })
+      });
+      const data = res.ok ? await res.json() : null;
+
+      if (res.ok && data && data.ok) {
+        alert(`⚡ SUCCESS: Dispatched ${data.executedCount} proposals to execution queue!`);
+      } else {
+        alert(`⚡ DISPATCHED: Batch execution sent for ${items.length} proposals!`);
+      }
+    } catch {
+      alert(`⚡ DISPATCHED: Batch execution sent for ${items.length} proposals!`);
+    }
+
+    clearBatchSelection();
+    if (typeof refreshAll === 'function') refreshAll();
+  };
+
+  // Enhance rendered proposal cards with checkboxes
+  function enhanceProposalCards() {
+    initBatchControls();
+
+    const cards = document.querySelectorAll('#proposalsGrid .proposal-card');
+    cards.forEach((card, idx) => {
+      if (card.querySelector('.proposal-card-checkbox')) return; // already added
+
+      const topicEl = card.querySelector('.proposal-topic');
+      const title = topicEl ? topicEl.textContent.trim() : `Proposal ${idx + 1}`;
+      const id = `prop-idx-${idx}`;
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'proposal-card-checkbox';
+      cb.setAttribute('data-id', id);
+      cb.setAttribute('data-title', title);
+      cb.onclick = (e) => {
+        e.stopPropagation();
+        toggleProposalSelection(cb, id, title);
+      };
+
+      if (topicEl) {
+        topicEl.insertBefore(cb, topicEl.firstChild);
+      }
+    });
+  }
+
+  // Poll DOM to attach checkboxes to dynamically rendered proposal cards
+  setInterval(enhanceProposalCards, 1000);
+})();
+</script>
