@@ -10,7 +10,7 @@
 
 ### (ก) บรรทัดที่ต้องเพิ่ม
 ```ts
-import { getTaskClaims, claimTask, releaseTask, completeTask } from "./task-claiming";
+import { listClaims, claimTask, releaseTask, completeTask } from "./claims-store";
 ```
 
 ### (ข) บริบทจริงก่อน Apply (BEFORE APPLY Context) จาก `src/server.ts` (บรรทัดที่ 8-15)
@@ -30,7 +30,7 @@ import { getTaskClaims, claimTask, releaseTask, completeTask } from "./task-clai
 9: import { getHealth } from "./health-monitor";
 10: import { getFleetHealthCached } from "./heartbeat-monitor";
 11: import { getWorktreeDriftCached } from "./worktree-drift";
-12: import { getTaskClaims, claimTask, releaseTask, completeTask } from "./task-claiming";
+12: import { listClaims, claimTask, releaseTask, completeTask } from "./claims-store";
 13: 
 14: // Auto-detect Windows host IP for WSL2 cross-boundary proxying
 ```
@@ -41,47 +41,43 @@ import { getTaskClaims, claimTask, releaseTask, completeTask } from "./task-clai
 
 ### (ก) บล็อกโค้ดที่ต้องเพิ่ม (5 Routes)
 ```ts
-// Task Claiming API Endpoints (#27 — Phase 5)
-app.get("/api/tasks/claims", (c) => {
-  return c.json(getTaskClaims());
+// Task Claims API Endpoints (#27 — maw Office Improve Phase 5)
+app.get("/api/claims", (c) => {
+  return c.json(listClaims());
 });
 
-app.post("/api/tasks/claim", async (c) => {
-  const body = await c.req.json().catch(() => ({}));
-  if (!body.taskId || !body.claimedBy) {
-    return c.json({ error: "taskId and claimedBy required" }, 400);
-  }
-  const result = claimTask(body.taskId, body.claimedBy, body.title, body.ttlMinutes);
-  if (!result.ok) return c.json({ error: result.error }, 409); // 409 Conflict if already locked
-  return c.json(result);
-});
-
-app.post("/api/tasks/release", async (c) => {
+app.post("/api/claims/claim", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.taskId || !body.agent) {
-    return c.json({ error: "taskId and agent required" }, 400);
+    return c.json({ ok: false, error: "taskId and agent required" }, 400);
   }
-  const result = releaseTask(body.taskId, body.agent);
-  if (!result.ok) return c.json({ error: result.error }, 400);
+  const result = claimTask(body.taskId, body.title, body.agent);
+  if (!result.ok) return c.json(result, 409); // 409 Conflict if locked by another agent
   return c.json(result);
 });
 
-app.post("/api/tasks/complete", async (c) => {
+app.post("/api/claims/release", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   if (!body.taskId || !body.agent) {
-    return c.json({ error: "taskId and agent required" }, 400);
+    return c.json({ ok: false, error: "taskId and agent required" }, 400);
   }
-  const result = completeTask(body.taskId, body.agent);
-  if (!result.ok) return c.json({ error: result.error }, 400);
-  return c.json(result);
+  return c.json(releaseTask(body.taskId, body.agent));
 });
 
-// Task Claiming Widget Page
+app.post("/api/claims/complete", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  if (!body.taskId || !body.agent) {
+    return c.json({ ok: false, error: "taskId and agent required" }, 400);
+  }
+  return c.json(completeTask(body.taskId, body.agent));
+});
+
+// Task Claims Widget Page
 app.get("/task-claiming-widget", (c) => {
   const { existsSync, readFileSync } = require("fs");
   const p = "/home/po-ch/agents/maw-js-server/task-claiming-widget.html";
   if (existsSync(p)) return c.html(readFileSync(p, "utf-8"));
-  return c.html("<h1>Task claiming widget not found</h1>", 404);
+  return c.html("<h1>Task claims widget not found</h1>", 404);
 });
 ```
 
@@ -105,50 +101,46 @@ app.get("/task-claiming-widget", (c) => {
 313:   return c.html("<h1>Worktree drift widget not found</h1>", 404);
 314: });
 315: 
-316: // Task Claiming API Endpoints (#27 — Phase 5)
-317: app.get("/api/tasks/claims", (c) => {
-318:   return c.json(getTaskClaims());
+316: // Task Claims API Endpoints (#27 — maw Office Improve Phase 5)
+317: app.get("/api/claims", (c) => {
+318:   return c.json(listClaims());
 319: });
 320: 
-321: app.post("/api/tasks/claim", async (c) => {
+321: app.post("/api/claims/claim", async (c) => {
 322:   const body = await c.req.json().catch(() => ({}));
-323:   if (!body.taskId || !body.claimedBy) {
-324:     return c.json({ error: "taskId and claimedBy required" }, 400);
+323:   if (!body.taskId || !body.agent) {
+324:     return c.json({ ok: false, error: "taskId and agent required" }, 400);
 325:   }
-326:   const result = claimTask(body.taskId, body.claimedBy, body.title, body.ttlMinutes);
-327:   if (!result.ok) return c.json({ error: result.error }, 409);
+326:   const result = claimTask(body.taskId, body.title, body.agent);
+327:   if (!result.ok) return c.json(result, 409);
 328:   return c.json(result);
 329: });
 330: 
-331: app.post("/api/tasks/release", async (c) => {
+331: app.post("/api/claims/release", async (c) => {
 332:   const body = await c.req.json().catch(() => ({}));
 333:   if (!body.taskId || !body.agent) {
-334:     return c.json({ error: "taskId and agent required" }, 400);
+334:     return c.json({ ok: false, error: "taskId and agent required" }, 400);
 335:   }
-336:   const result = releaseTask(body.taskId, body.agent);
-337:   if (!result.ok) return c.json({ error: result.error }, 400);
-338:   return c.json(result);
-339: });
-340: 
-341: app.post("/api/tasks/complete", async (c) => {
-342:   const body = await c.req.json().catch(() => ({}));
-343:   if (!body.taskId || !body.agent) {
-344:     return c.json({ error: "taskId and agent required" }, 400);
-345:   }
-346:   const result = completeTask(body.taskId, body.agent);
-347:   if (!result.ok) return c.json({ error: result.error }, 400);
-348:   return c.json(result);
-349: });
-350: 
-351: // Task Claiming Widget Page
-352: app.get("/task-claiming-widget", (c) => {
-353:   const { existsSync, readFileSync } = require("fs");
-354:   const p = "/home/po-ch/agents/maw-js-server/task-claiming-widget.html";
-355:   if (existsSync(p)) return c.html(readFileSync(p, "utf-8"));
-356:   return c.html("<h1>Task claiming widget not found</h1>", 404);
-357: });
-358: 
-359: // Oracle Studio static assets (tokens.css, style.css, app.js, etc.)
+336:   return c.json(releaseTask(body.taskId, body.agent));
+337: });
+338: 
+339: app.post("/api/claims/complete", async (c) => {
+340:   const body = await c.req.json().catch(() => ({}));
+341:   if (!body.taskId || !body.agent) {
+342:     return c.json({ ok: false, error: "taskId and agent required" }, 400);
+343:   }
+344:   return c.json(completeTask(body.taskId, body.agent));
+345: });
+346: 
+347: // Task Claims Widget Page
+348: app.get("/task-claiming-widget", (c) => {
+349:   const { existsSync, readFileSync } = require("fs");
+350:   const p = "/home/po-ch/agents/maw-js-server/task-claiming-widget.html";
+351:   if (existsSync(p)) return c.html(readFileSync(p, "utf-8"));
+352:   return c.html("<h1>Task claims widget not found</h1>", 404);
+353: });
+354: 
+355: // Oracle Studio static assets (tokens.css, style.css, app.js, etc.)
 ```
 
 ---
@@ -157,7 +149,7 @@ app.get("/task-claiming-widget", (c) => {
 
 ```bash
 # 1. Copy โมดูลและ HTML widget ไปวางใน live checkout
-cp deliverables/task-claiming/task-claiming.ts /home/po-ch/agents/maw-js-server/src/task-claiming.ts
+cp deliverables/task-claiming/claims-store.ts /home/po-ch/agents/maw-js-server/src/claims-store.ts
 cp deliverables/task-claiming/task-claiming-widget.html /home/po-ch/agents/maw-js-server/task-claiming-widget.html
 
 # 2. แก้ไข src/server.ts ตามบรรทัดระบุข้างต้น
@@ -167,5 +159,5 @@ cd /home/po-ch/agents/maw-js-server
 bun src/server.ts
 
 # Smoke test
-curl -s http://localhost:4000/api/tasks/claims | jq .
+curl -s http://localhost:4000/api/claims | jq .
 ```
