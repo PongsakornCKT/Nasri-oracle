@@ -2,10 +2,7 @@
  * health-monitor.ts — System Health Service Monitor for MAW Office
  *
  * Standalone TypeScript module with zero external dependencies.
- * Monitors 5 key local services via HTTP fetch with 3s AbortController timeout.
- * Provides in-memory caching with 30s TTL.
- *
- * Target Path in live checkout: maw-js-server/src/health-monitor.ts
+ * Target Location in live checkout: /home/po-ch/agents/maw-js-server/src/health-monitor.ts
  *
  * Author: Nasri Oracle — Right Hand of Ma'at 𓂀
  * Date: 2026-08-11
@@ -111,7 +108,7 @@ export async function getHealth(forceRefresh = false): Promise<SystemHealthData>
   return cachedHealth;
 }
 
-// ─── Standalone CLI Execution ─────────────────────────────────────────
+// ─── Standalone CLI Execution Block ───────────────────────────────────
 if (import.meta.main) {
   const healthData = await getHealth(true);
   console.log(JSON.stringify(healthData, null, 2));
