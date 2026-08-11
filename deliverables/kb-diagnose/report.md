@@ -24,45 +24,35 @@
 
 ## 🔍 1. Root Cause Analysis: Why Every Query Returns `"via kb_fts_fallback"`?
 
-### (ก) หลักฐานในโค้ด (Evidence with Path & Line Numbers)
+### (ก) สาเหตุที่แท้จริง (True Root Cause & Retest Evidence)
 
-1. **`scripts/knowledge/embedder.ts` (Lines 36, 98-103, 148)**:
-   - **Line 36**: `const DEFAULT_MODEL = "bge-m3";`
-   - **Line 148**: `const model = opts.model ?? DEFAULT_MODEL;`
-   - **Lines 98-103**: `callEmbed` ยิง HTTP POST ไปยัง `http://172.31.32.1:11434/api/embed` ด้วย Body: `{"model": "bge-m3", "input": "..."}`
-   - **สาเหตุ**: ชื่อ Model Tag ใน Ollama (`http://172.31.32.1:11434/api/tags`) คือ **`"bge-m3:latest"`** เมื่อส่ง `"bge-m3"` (ไม่มี tag `:latest`) Ollama พยายามค้นหาใน library ทำให้เกิด **Timeout (30,000ms)** แล้วคืนค่า `null`
-   - **การพิสูจน์**: ทดสอบเรียก `checkOllama()` ได้ `hasModel: true` แต่เรียก `embedText()` ได้ `null` (Timeout 30s)
+1. **Ollama Outage ลากยาวหลายเดือน (Primary Root Cause)**:
+   - บริการ Ollama ดับสนิทมาหลายเดือนก่อนหน้านี้ เพิ่งถูกเปิดฟื้นระบบกลับมาวันนี้ ส่งผลให้สคริปต์ `vectorize.ts` ที่ผ่านมาไม่เคยฝัง Vector ลงในตาราง `kb_embeddings` ได้เลย (**Row Count = 0**)
 
-2. **`scripts/knowledge/hybrid-search.ts` (Lines 300–312)**:
-   - **Lines 300-312**:
-     ```ts
-     const queryVec = await embedText(preprocessedQuery);
-     if (queryVec) {
-       ...
-     } else {
-       ftOnly = true; // Ollama unavailable or model return null
-     }
-     ```
-   - **ผลกระทบ**: เมื่อ `embedText()` คืนค่า `null` ระบบจะปรับ `ftOnly = true` และส่งค่า `fts_only: true` กลับไปยัง `api.ts` ส่งผลให้ UI แสดงข้อความว่า `"via kb_fts_fallback"` บนทุก Query
+2. **อาการ Cold-Start Swap VRAM (>30,000ms Timeout) (Secondary Factor)**:
+   - **`scripts/knowledge/embedder.ts` (Line 149)** กำหนด Timeout ไว้ 30 วินาที (`DEFAULT_TIMEOUT = 30_000`)
+   - ในการทดสอบคำขอแรก Ollama ต้องทำการ Unload โมเดล LLM ขนาดใหญ่ (`wy-big` 18.5GB) ออกจาก GPU VRAM แล้ว Swap โมเดล `bge-m3` (1.1GB) เข้าสู่ VRAM ซึ่งใช้เวลา ~29.9 วินาที ทำให้ติดเพดาน Timeout และ `embedText()` คืนค่า `null`
+   - **ผลการเทสซ้ำเมื่อ Warm State**: เมื่อ Ollama โหลดโมเดลเรียบร้อยแล้ว ทั้งชื่อ `"bge-m3"` และ `"bge-m3:latest"` ตอบสนองได้รวดเร็วเท่ากันที่ **0.3 วินาที** (Ollama Map `:latest` อัตโนมัติอยู่แล้ว)
 
-3. **`oracle_kb.db` Table `kb_embeddings` (Row Count: 0)**:
-   - ในตาราง `kb_embeddings` มี **0 แถว** เนื่องจากสคริปต์ `vectorize.ts` ไม่เคยรันฝัง Vector สำเร็จจากสาเหตุ Model Tag Mismatch ข้างต้น
+3. **`scripts/knowledge/hybrid-search.ts` (Lines 300–312)**:
+   - เมื่อ `embedText()` คืนค่า `null` จากอาการ Cold-Start Timeout หรือตาราง `kb_embeddings` ว่างเปล่า ระบบจะปรับ `ftOnly = true` และส่งค่า `fts_only: true` กลับไปยัง `api.ts` ส่งผลให้ UI แสดงข้อความว่า `"via kb_fts_fallback"` บนทุก Query
+
 
 ---
 
-## 🛠️ 2. แผนชุบชีวิต Vector Search (Revival Plan)
+## 🛠️ 2. แผนชุบชีวิต Vector Search & Phase 2 Roadmap
 
-### ขั้นตอนการดำเนินการ (Step-by-Step)
-1. **แก้ไข Model Tag ใน `embedder.ts`**:
-   - ปรับ `DEFAULT_MODEL` ใน `scripts/knowledge/embedder.ts` (บรรทัดที่ 36) จาก `"bge-m3"` เป็น **`"bge-m3:latest"`** (หรือเพิ่ม Auto-Append `:latest` ใน `callEmbed`)
-2. **สร้าง Fast Fallback สำหรับ Embedding**:
-   - เพิ่ม `nomic-embed-text:latest` (274MB, 768-dim) เป็น secondary fallback embedder หาก `bge-m3` ใช้เวลา Warm-up VRAM นานเกิน 3 วินาที
-3. **รัน Vectorization ฝัง Vector ย้อนหลัง**:
-   - รันสคริปต์ `bun scripts/knowledge/vectorize.ts` เพื่อสร้าง 1024-dim Float32 Vector สำหรับ 2,969 chunks ที่สะอาด ลงใน `kb_embeddings` และ `vec_items`
+### ขั้นตอนการดำเนินการ Phase 2 (4-Step Approved Plan)
+1. **เพิ่ม Timeout & Warm-up Ping กัน Cold-Start**:
+   - ปรับ Timeout ใน `embedder.ts` จาก 30 วินาที เป็น **90 วินาที** (`DEFAULT_TIMEOUT = 90_000`)
+   - เพิ่มฟังก์ชัน Warm-up Ping ยิงสุ่ม 1 Vector ขนาดสั้น ก่อนเริ่มการทำงาน batch เพื่อกระตุ้นให้ Ollama โหลด `bge-m3` เข้า VRAM ให้เสร็จเรียบร้อยล่วงหน้า
+2. **ล้างขยะ `notepad-backup` 2,968 Chunks ก่อน**:
+   - รันสคริปต์ `kb-purge-junk.ts` ลบขยะ 2,968 chunks ออกจาก `oracle_kb.db` ให้เหลือเฉพาะข้อมูลที่สะอาด ~2,969 chunks
+3. **รัน Vectorization Backfill ~3,000 Chunks ที่เหลือ**:
+   - รันสคริปต์ `bun scripts/knowledge/vectorize.ts` เพื่อสร้าง 1024-dim Float32 Vector สำหรับข้อมูลสะอาด ~3,000 chunks ลงใน `kb_embeddings` และ `vec_items`
+4. **เพิ่ม Ingestion `learnings/` และ `retrospectives/`**:
+   - เพิ่มเส้นทาง `ψ/memory/learnings/*.md` และ `ψ/memory/retrospectives/*.md` เข้าสู่ `auto-ingest-oracle.ts`
 
-### ความเสี่ยงและการป้องกัน (Risks & Mitigations)
-- **ความเสี่ยง**: Ollama ต้อง Unload LLM ใหญ่ (`wy-big` 18.5GB) ออกจาก VRAM เพื่อ Swap เอา `bge-m3` เข้า VRAM ในครั้งแรก อาจใช้เวลา 20–25 วินาที
-- **การป้องกัน**: รัน `vectorize.ts` แบบ Background Batch (100 chunks/batch) และตั้งค่า Timeout ของ Query Embedder เป็น 3 วินาที (หากเกิน 3s ให้สลับใช้ FTS5 ชั่วคราวโดยไม่ค้าง)
 
 ---
 
