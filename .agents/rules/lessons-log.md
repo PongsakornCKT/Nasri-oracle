@@ -34,5 +34,13 @@
 * **ทำไมถึงพลาด**: ฝั่ง backend API ตรวจสอบตรงเป๊ะ แต่ฝั่ง frontend คาดเดาเอาเองโดยไม่ได้ใช้วิธี `view_file` ตรวจสอบโค้ดจริง
 * **กลไกกันซ้ำ**: **"Never Guess Code Logic or Symbols"** — ขั้นตอน Inventory ต้องเปิดอ่านไฟล์จริงครบทุกไฟล์ที่อ้างอิง ห้ามมโนหรือคาดเดาชื่อ symbol/function จากความคุ้นเคยเด็ดขาด
 
+### 5. เคสการวินิจฉัย Root Cause ผิดพลาดจาก Cold Start / State ไม่นิ่ง (KB Vector Diagnosis)
+* **เกิดอะไรขึ้น**: ในการวินิจฉัยปัญหา Vector Search บน Knowledge Base สรุปว่าเกิดจาก Model Tag Mismatch (`bge-m3` vs `bge-m3:latest`) เนื่องจากทดสอบครั้งแรกแล้วเจอ Timeout 30s
+* **ทำไมถึงพลาด**: ไม่ได้เฉลียวใจว่าเป็นอาการ Cold Load / Cold Start ที่ Ollama เพิ่งฟื้นและต้องใช้เวลาดึงโมเดล 1.1GB เข้า VRAM ในคำขอแรก เมื่อ Ollama อุ่นแล้ว (Warm state) ชื่อ `"bge-m3"` และ `"bge-m3:latest"` ให้ผลลัพธ์รวดเร็วใน 0.3 วินาทีเท่ากัน
+* **กลไกกันซ้ำ**:
+  - **"ผลเทสครั้งแรกใน state ผิดปกติ (cold start, เครื่องเพิ่งฟื้น) ไม่ใช่ความจริงถาวร — ก่อนสรุป root cause ต้อง retest อย่างน้อย 2 รอบให้ state นิ่ง"**
+  - **"อาการ timeout ให้แยก 2 สมมติฐานเสมอ: ของผิด (Wrong/Broken) vs ของช้า (Slow/Cold Start)"**
+
 ---
 *Recorded by Nasri Oracle — Right Hand of Ma'at 𓂀*
+
