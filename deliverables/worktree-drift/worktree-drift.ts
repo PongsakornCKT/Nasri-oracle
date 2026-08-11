@@ -2,50 +2,57 @@
  * worktree-drift.ts — Active Worktree Drift & Uncommitted Changes Monitor
  *
  * Standalone TypeScript module with zero external dependencies.
- * Scans active worktrees to measure git drift, uncommitted file counts,
- * and last commit timestamp.
+ * Enumerates worktrees for configured main repos (pa-Oracle v2, enervia-survey, nasri-oracle)
+ * using `git worktree list --porcelain`.
  *
- * Includes a 10s In-memory Cache TTL to prevent WSL I/O slowdowns.
+ * Filters CRLF line-ending noise on /mnt/c/ using `git -c core.autocrlf=true status --short`.
+ * Includes 60s In-memory Cache TTL and 10s per-command timeout.
  *
  * Author: Nasri Oracle — Right Hand of Ma'at 𓂀
  * Date: 2026-08-11
  */
 
 import { execSync } from "child_process";
-import { existsSync, readdirSync, statSync } from "fs";
-import { join } from "path";
+import { existsSync } from "fs";
 
 // ─── Interfaces ──────────────────────────────────────────────────────
-export interface WorktreeDriftInfo {
+export interface TargetRepoConfig {
   name: string;
   path: string;
-  branch: string;
-  repo: string;
-  status: "active" | "stale" | "orphan";
-  uncommittedCount: number;
-  uncommittedFiles: string[];
-  lastCommitTime: string | null;
-  lastCommitAgeSec: number | null;
-  hasDrift: boolean;
 }
 
-export interface FleetWorktreeDriftSummary {
-  worktrees: WorktreeDriftInfo[];
-  total: number;
+export interface WorktreeDriftItem {
+  repo: string;
+  path: string;
+  branch: string;
+  uncommittedCount: number;
+  lastCommitAt: string | null;
+  ageDays: number | null;
+}
+
+export interface FleetWorktreeDriftReport {
+  worktrees: WorktreeDriftItem[];
+  totalWorktrees: number;
   cleanCount: number;
   driftCount: number;
   totalUncommittedFiles: number;
   checkedAt: string;
 }
 
-// ─── Git Helper Functions ─────────────────────────────────────────────
-/** Run git command in specified directory safely */
-function runGitCmd(cwd: string, cmd: string): string {
+// ─── Configured Repos Roster ──────────────────────────────────────────
+export const TARGET_REPOS: TargetRepoConfig[] = [
+  { name: "pa-Oracle v2", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/pa-Oracle v2" },
+  { name: "enervia-survey", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/enervia-survey" },
+  { name: "nasri-oracle", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/nasri-oracle" },
+];
+
+// ─── Git Helper with 10s Timeout ──────────────────────────────────────
+function safeGitCmd(cwd: string, cmd: string, timeoutMs = 10000): string {
   try {
     if (!existsSync(cwd)) return "";
     return execSync(`git -C "${cwd}" ${cmd}`, {
       encoding: "utf-8",
-      timeout: 3000,
+      timeout: timeoutMs,
       stderr: "ignore",
     }).trim();
   } catch {
@@ -53,84 +60,103 @@ function runGitCmd(cwd: string, cmd: string): string {
   }
 }
 
-/** Probe uncommitted changes count and list in a worktree */
-export function getWorktreeDriftStatus(wtPath: string, name = "", repo = "", branch = ""): WorktreeDriftInfo {
-  const dirName = name || wtPath.split("/").pop() || "unknown";
+// ─── Parse Worktrees via git worktree list --porcelain ────────────────
+interface RawWorktreeInfo {
+  path: string;
+  branch: string;
+}
 
-  // 1. Get git status --porcelain
-  const porcelain = runGitCmd(wtPath, "status --porcelain");
-  const uncommittedFiles = porcelain ? porcelain.split("\n").filter(Boolean) : [];
-  const uncommittedCount = uncommittedFiles.length;
+function listWorktreesPorcelain(mainRepoPath: string): RawWorktreeInfo[] {
+  const raw = safeGitCmd(mainRepoPath, "worktree list --porcelain");
+  if (!raw) return [{ path: mainRepoPath, branch: "unknown" }];
 
-  // 2. Get last commit ISO timestamp
-  const lastCommitStr = runGitCmd(wtPath, "log -1 --format=%cd --date=iso-strict");
-  let lastCommitTime: string | null = null;
-  let lastCommitAgeSec: number | null = null;
+  const worktrees: RawWorktreeInfo[] = [];
+  const blocks = raw.split("\n\n");
 
-  if (lastCommitStr) {
-    const ts = Date.parse(lastCommitStr);
-    if (!isNaN(ts)) {
-      lastCommitTime = new Date(ts).toISOString();
-      lastCommitAgeSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  for (const block of blocks) {
+    if (!block.trim()) continue;
+    const lines = block.split("\n");
+    let wtPath = "";
+    let branch = "unknown";
+
+    for (const l of lines) {
+      if (l.startsWith("worktree ")) {
+        wtPath = l.replace("worktree ", "").trim();
+      } else if (l.startsWith("branch ")) {
+        branch = l.replace("branch refs/heads/", "").trim();
+      }
+    }
+
+    if (wtPath) {
+      worktrees.push({ path: wtPath, branch });
     }
   }
 
-  // 3. Get branch if not provided
-  if (!branch) {
-    branch = runGitCmd(wtPath, "rev-parse --abbrev-ref HEAD") || "unknown";
+  return worktrees.length > 0 ? worktrees : [{ path: mainRepoPath, branch: "unknown" }];
+}
+
+// ─── Probe Single Worktree ────────────────────────────────────────────
+export function inspectWorktree(repoName: string, wtPath: string, defaultBranch = ""): WorktreeDriftItem {
+  // 1. CRLF-filtered status count
+  // git -c core.autocrlf=true status --short filters out CRLF line-ending noise
+  const statusRaw = safeGitCmd(wtPath, "-c core.autocrlf=true status --short");
+  const uncommittedLines = statusRaw ? statusRaw.split("\n").filter((l) => l.trim().length > 0) : [];
+  const uncommittedCount = uncommittedLines.length;
+
+  // 2. Get Branch name if unknown
+  let branch = defaultBranch;
+  if (!branch || branch === "unknown") {
+    branch = safeGitCmd(wtPath, "rev-parse --abbrev-ref HEAD") || "unknown";
   }
 
-  const hasDrift = uncommittedCount > 0;
+  // 3. Get last commit timestamp ISO
+  const lastCommitIso = safeGitCmd(wtPath, "log -1 --format=%cd --date=iso-strict");
+  let lastCommitAt: string | null = null;
+  let ageDays: number | null = null;
+
+  if (lastCommitIso) {
+    const ts = Date.parse(lastCommitIso);
+    if (!isNaN(ts)) {
+      lastCommitAt = new Date(ts).toISOString();
+      const diffMs = Date.now() - ts;
+      ageDays = Math.max(0, Math.round((diffMs / (1000 * 60 * 60 * 24)) * 10) / 10);
+    }
+  }
 
   return {
-    name: dirName,
+    repo: repoName,
     path: wtPath,
     branch,
-    repo: repo || dirName,
-    status: existsSync(join(wtPath, ".git")) ? "active" : "stale",
     uncommittedCount,
-    uncommittedFiles,
-    lastCommitTime,
-    lastCommitAgeSec,
-    hasDrift,
+    lastCommitAt,
+    ageDays,
   };
 }
 
-// ─── Scan All Worktrees ───────────────────────────────────────────────
-export function scanFleetWorktreesDrift(ghqRoot = "/home/po-ch/ghq"): FleetWorktreeDriftSummary {
-  const worktreeList: WorktreeDriftInfo[] = [];
+// ─── Main Fleet Worktree Drift Scanner ────────────────────────────────
+export function getWorktreeDrift(): FleetWorktreeDriftReport {
+  const worktreeItems: WorktreeDriftItem[] = [];
 
-  // Default scan paths including known worktrees on this machine
-  const knownPaths = [
-    "/mnt/c/Users/pO-Ch/Documents/GitHub/pa-oracle-wt-tracker-exec",
-    "/mnt/c/Users/pO-Ch/Documents/GitHub/nasri-oracle",
-  ];
+  for (const repoConfig of TARGET_REPOS) {
+    if (!existsSync(repoConfig.path)) continue;
 
-  // Try finding .wt- directories under ghq or github
-  try {
-    const findOutput = execSync(`find /home/po-ch/ghq /mnt/c/Users/pO-Ch/Documents/GitHub -maxdepth 3 -name "*.wt-*" -type d 2>/dev/null`, {
-      encoding: "utf-8",
-      timeout: 4000,
-    });
-    const paths = findOutput.split("\n").filter(Boolean);
-    for (const p of paths) {
-      if (!knownPaths.includes(p)) knownPaths.push(p);
-    }
-  } catch {}
-
-  for (const p of knownPaths) {
-    if (existsSync(p)) {
-      worktreeList.push(getWorktreeDriftStatus(p));
+    // List all worktrees associated with this main repo
+    const rawWts = listWorktreesPorcelain(repoConfig.path);
+    for (const wt of rawWts) {
+      if (existsSync(wt.path)) {
+        const item = inspectWorktree(repoConfig.name, wt.path, wt.branch);
+        worktreeItems.push(item);
+      }
     }
   }
 
-  const driftCount = worktreeList.filter((w) => w.hasDrift).length;
-  const cleanCount = worktreeList.length - driftCount;
-  const totalUncommittedFiles = worktreeList.reduce((acc, w) => acc + w.uncommittedCount, 0);
+  const cleanCount = worktreeItems.filter((w) => w.uncommittedCount === 0).length;
+  const driftCount = worktreeItems.filter((w) => w.uncommittedCount > 0).length;
+  const totalUncommittedFiles = worktreeItems.reduce((sum, w) => sum + w.uncommittedCount, 0);
 
   return {
-    worktrees: worktreeList,
-    total: worktreeList.length,
+    worktrees: worktreeItems,
+    totalWorktrees: worktreeItems.length,
     cleanCount,
     driftCount,
     totalUncommittedFiles,
@@ -138,23 +164,35 @@ export function scanFleetWorktreesDrift(ghqRoot = "/home/po-ch/ghq"): FleetWorkt
   };
 }
 
-// ─── In-Memory Cache with 10s TTL ────────────────────────────────────
-let cachedDrift: FleetWorktreeDriftSummary | null = null;
+// ─── 60s In-Memory Cache Wrapper ─────────────────────────────────────
+let cachedReport: FleetWorktreeDriftReport | null = null;
 let cacheExpiresAt = 0;
-const CACHE_TTL_MS = 10_000; // 10s TTL
+const CACHE_TTL_MS = 60_000; // 60s Cache TTL
 
-export function getWorktreeDriftCached(forceRefresh = false): FleetWorktreeDriftSummary {
+export function getWorktreeDriftCached(forceRefresh = false): FleetWorktreeDriftReport {
   const now = Date.now();
-  if (!forceRefresh && cachedDrift && now < cacheExpiresAt) {
-    return cachedDrift;
+  if (!forceRefresh && cachedReport && now < cacheExpiresAt) {
+    return cachedReport;
   }
-  cachedDrift = scanFleetWorktreesDrift();
+  cachedReport = getWorktreeDrift();
   cacheExpiresAt = now + CACHE_TTL_MS;
-  return cachedDrift;
+  return cachedReport;
 }
 
-// ─── Standalone CLI Execution Block ───────────────────────────────────
+// ─── Example Hono Route ───────────────────────────────────────────────
+/*
+  In maw-js-server/src/server.ts:
+
+  import { getWorktreeDriftCached } from "./worktree-drift";
+
+  app.get("/api/worktrees/drift", (c) => {
+    const refresh = c.req.query("refresh") === "1";
+    return c.json(getWorktreeDriftCached(refresh));
+  });
+*/
+
+// ─── Standalone CLI Execution ─────────────────────────────────────────
 if (import.meta.main) {
-  const data = getWorktreeDriftCached(true);
-  console.log(JSON.stringify(data, null, 2));
+  const report = getWorktreeDriftCached(true);
+  console.log(JSON.stringify(report, null, 2));
 }

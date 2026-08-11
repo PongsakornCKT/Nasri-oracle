@@ -36,7 +36,7 @@
 
     .widget-card {
       width: 100%;
-      max-width: 620px;
+      max-width: 640px;
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -100,6 +100,9 @@
       flex-direction: column;
       gap: 8px;
       margin-top: 12px;
+      max-height: 480px;
+      overflow-y: auto;
+      padding-right: 4px;
     }
 
     .wt-row {
@@ -118,11 +121,6 @@
       border-color: var(--border-hover);
     }
 
-    .wt-row.drifted {
-      background: rgba(245, 158, 11, 0.03);
-      border-color: rgba(245, 158, 11, 0.2);
-    }
-
     .wt-left {
       display: flex;
       align-items: center;
@@ -138,8 +136,9 @@
       flex-shrink: 0;
     }
 
-    .status-dot.clean { background: var(--green); box-shadow: var(--green-glow); }
-    .status-dot.drifted { background: var(--amber); box-shadow: var(--amber-glow); }
+    .status-dot.green { background: var(--green); box-shadow: var(--green-glow); }
+    .status-dot.amber { background: var(--amber); box-shadow: var(--amber-glow); }
+    .status-dot.red { background: var(--red); box-shadow: var(--red-glow); }
 
     .wt-info {
       display: flex;
@@ -147,9 +146,9 @@
       min-width: 0;
     }
 
-    .wt-name {
+    .wt-repo {
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--text);
     }
 
@@ -157,6 +156,7 @@
       font-size: 10px;
       font-family: 'IBM Plex Mono', monospace;
       color: var(--text-dim);
+      truncate: true;
     }
 
     .wt-right {
@@ -165,19 +165,21 @@
       align-items: flex-end;
       font-family: 'IBM Plex Mono', monospace;
       font-size: 11px;
+      flex-shrink: 0;
     }
 
-    .drift-pill {
+    .count-badge {
       font-size: 10px;
       font-weight: 700;
-      padding: 1px 6px;
+      padding: 2px 6px;
       border-radius: 4px;
     }
 
-    .drift-pill.clean { background: rgba(34, 197, 94, 0.1); color: var(--green); }
-    .drift-pill.drifted { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+    .count-badge.green { background: rgba(34, 197, 94, 0.12); color: var(--green); }
+    .count-badge.amber { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+    .count-badge.red { background: rgba(239, 68, 68, 0.15); color: var(--red); }
 
-    .commit-time {
+    .age-text {
       font-size: 9px;
       color: var(--text-dim);
       margin-top: 2px;
@@ -200,7 +202,7 @@
   <div class="widget-card">
     <div class="card-header">
       <div class="card-title">
-        <span>🍂 Active Worktree Drift</span>
+        <span>🍂 Worktree Drift</span>
         <div class="summary-group">
           <span class="summary-pill clean" id="pillClean">0 Clean</span>
           <span class="summary-pill drift" id="pillDrift">0 Drifted</span>
@@ -218,33 +220,31 @@
 
     <!-- Footer -->
     <div class="card-footer">
-      <span>Auto-polling every 10s • Cache TTL 10s</span>
+      <span>Auto-polling every 60s • Cache TTL 60s</span>
       <span id="lastUpdated">Checking...</span>
     </div>
   </div>
 
   <script>
-    // Fallback Mock Data for local preview (file://)
+    // Fallback Mock Data for local file preview (file://)
     const MOCK_DATA = {
       worktrees: [
-        { name: "pa-oracle-wt-tracker-exec", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/pa-oracle-wt-tracker-exec", branch: "feat/tracker-execute", repo: "pa-Oracle v2", status: "active", uncommittedCount: 0, lastCommitAgeSec: 300, hasDrift: false },
-        { name: "nasri-oracle", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/nasri-oracle", branch: "master", repo: "nasri-oracle", status: "active", uncommittedCount: 12, lastCommitAgeSec: 680, hasDrift: true }
+        { repo: "pa-Oracle v2", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/pa-Oracle v2", branch: "feat/governance-capture-hook", uncommittedCount: 205, lastCommitAt: new Date().toISOString(), ageDays: 0.2 },
+        { repo: "enervia-survey", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/enervia-survey", branch: "fix/contract-header-number-wrap", uncommittedCount: 1, lastCommitAt: new Date().toISOString(), ageDays: 10.7 },
+        { repo: "nasri-oracle", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/nasri-oracle", branch: "master", uncommittedCount: 0, lastCommitAt: new Date().toISOString(), ageDays: 0 }
       ],
-      total: 2,
+      totalWorktrees: 3,
       cleanCount: 1,
-      driftCount: 1,
-      totalUncommittedFiles: 12,
+      driftCount: 2,
+      totalUncommittedFiles: 206,
       checkedAt: new Date().toISOString()
     };
 
-    function formatRelativeAge(ageSec) {
-      if (ageSec === null || ageSec === undefined) return 'ไม่ทราบเวลา';
-      if (ageSec < 10) return 'เมื่อครู่';
-      if (ageSec < 60) return `${ageSec} วินาทีที่แล้ว`;
-      const min = Math.floor(ageSec / 60);
-      if (min < 60) return `${min} นาทีที่แล้ว`;
-      const hr = Math.floor(min / 60);
-      return `${hr} ชั่วโมงที่แล้ว`;
+    function formatAgeDaysThai(ageDays) {
+      if (ageDays === null || ageDays === undefined) return 'ไม่ทราบเวลา';
+      if (ageDays < 0.1) return 'วันนี้';
+      if (ageDays < 1) return `${Math.round(ageDays * 24)} ชั่วโมงที่แล้ว`;
+      return `${Math.round(ageDays * 10) / 10} วันที่แล้ว`;
     }
 
     let currentData = MOCK_DATA;
@@ -260,23 +260,35 @@
 
       currentData.worktrees.forEach(w => {
         const row = document.createElement('div');
-        row.className = `wt-row ${w.hasDrift ? 'drifted' : ''}`;
+        row.className = 'wt-row';
 
-        const dotClass = `status-dot ${w.hasDrift ? 'drifted' : 'clean'}`;
-        const pillClass = `drift-pill ${w.hasDrift ? 'drifted' : 'clean'}`;
-        const pillText = w.hasDrift ? `⚠️ ${w.uncommittedCount} uncommitted files` : '✓ Clean';
+        const count = w.uncommittedCount || 0;
+        let colorClass = 'green';
+        let countText = '0 uncommitted (Clean)';
+
+        if (count > 10) {
+          colorClass = 'red';
+          countText = `${count} uncommitted files`;
+        } else if (count > 0) {
+          colorClass = 'amber';
+          countText = `${count} uncommitted file${count > 1 ? 's' : ''}`;
+        }
+
+        const dotClass = `status-dot ${colorClass}`;
+        const badgeClass = `count-badge ${colorClass}`;
+        const ageText = formatAgeDaysThai(w.ageDays);
 
         row.innerHTML = `
           <div class="wt-left">
             <div class="${dotClass}"></div>
             <div class="wt-info">
-              <div class="wt-name">${w.name}</div>
+              <div class="wt-repo">${w.repo}</div>
               <div class="wt-branch">🌿 ${w.branch}</div>
             </div>
           </div>
           <div class="wt-right">
-            <span class="${pillClass}">${pillText}</span>
-            <span class="commit-time">Commit ${formatRelativeAge(w.lastCommitAgeSec)}</span>
+            <span class="${badgeClass}">${countText}</span>
+            <span class="age-text">${ageText}</span>
           </div>
         `;
         listEl.appendChild(row);
@@ -309,7 +321,7 @@
     }
 
     fetchDriftData();
-    setInterval(fetchDriftData, 10000);
+    setInterval(fetchDriftData, 60000);
   </script>
 </body>
 </html>

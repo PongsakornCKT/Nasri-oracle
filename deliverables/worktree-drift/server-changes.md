@@ -35,11 +35,11 @@ import { getWorktreeDriftCached } from "./worktree-drift";
 
 ---
 
-## 2. Route Declarations Addition (ในส่วน Worktree Hygiene หลังบรรทัดที่ 623)
+## 2. Route Declarations Addition (หลังบรรทัดที่ 299 ต่อจาก Phase 2)
 
 ### (ก) บล็อกโค้ดที่ต้องเพิ่ม (2 Routes)
 ```ts
-// Active Worktree Drift API (#19 — Phase 4)
+// Active Worktree Drift API (#19 — maw Office Improve Phase 4)
 app.get("/api/worktrees/drift", (c) => {
   const refresh = c.req.query("refresh") === "1";
   return c.json(getWorktreeDriftCached(refresh));
@@ -54,41 +54,41 @@ app.get("/worktree-drift-widget", (c) => {
 });
 ```
 
-### (ข) บริบทจริงก่อน Apply (BEFORE APPLY Context) จาก `src/server.ts` (บรรทัดที่ 618-626)
+### (ข) บริบทจริงก่อน Apply (BEFORE APPLY Context) จาก `src/server.ts` (บรรทัดที่ 293-303)
 ```ts
-618:     const log = await cleanupWorktree(path);
-619:     return c.json({ ok: true, log });
-620:   } catch (e: any) {
-621:     return c.json({ error: e.message }, 500);
-622:   }
-623: });
-624: 
-625: // --- Token Usage ---
-626: import { calculateTokenSummary, getCostByAgent } from "./costs";
+293: // Fleet Heartbeat Widget page
+294: app.get("/fleet-health-widget", (c) => {
+295:   const { existsSync, readFileSync } = require("fs");
+296:   const p = "/home/po-ch/agents/maw-js-server/fleet-health-widget.html";
+297:   if (existsSync(p)) return c.html(readFileSync(p, "utf-8"));
+298:   return c.html("<h1>Fleet health widget not found</h1>", 404);
+299: });
+300: 
+301: // Oracle Studio static assets (tokens.css, style.css, app.js, etc.)
+302: const ORACLE_STUDIO = "/mnt/c/Users/pO-Ch/Documents/GitHub/pa-Oracle v2/oracle-studio";
+303: const STATIC_EXT: Record<string, string> = {
 ```
 
 ### (ค) บริบทหลังแทรก (AFTER Context)
 ```ts
-620:   } catch (e: any) {
-621:     return c.json({ error: e.message }, 500);
-622:   }
-623: });
-624: 
-625: // Active Worktree Drift API (#19 — Phase 4)
-626: app.get("/api/worktrees/drift", (c) => {
-627:   const refresh = c.req.query("refresh") === "1";
-628:   return c.json(getWorktreeDriftCached(refresh));
-629: });
-630: 
-631: // Worktree Drift Widget Page
-632: app.get("/worktree-drift-widget", (c) => {
-633:   const { existsSync, readFileSync } = require("fs");
-634:   const p = "/home/po-ch/agents/maw-js-server/worktree-drift-widget.html";
-635:   if (existsSync(p)) return c.html(readFileSync(p, "utf-8"));
-636:   return c.html("<h1>Worktree drift widget not found</h1>", 404);
-637: });
-638: 
-639: // --- Token Usage ---
+298:   return c.html("<h1>Fleet health widget not found</h1>", 404);
+299: });
+300: 
+301: // Active Worktree Drift API (#19 — maw Office Improve Phase 4)
+302: app.get("/api/worktrees/drift", (c) => {
+303:   const refresh = c.req.query("refresh") === "1";
+304:   return c.json(getWorktreeDriftCached(refresh));
+305: });
+306: 
+307: // Worktree Drift Widget Page
+308: app.get("/worktree-drift-widget", (c) => {
+309:   const { existsSync, readFileSync } = require("fs");
+310:   const p = "/home/po-ch/agents/maw-js-server/worktree-drift-widget.html";
+311:   if (existsSync(p)) return c.html(readFileSync(p, "utf-8"));
+312:   return c.html("<h1>Worktree drift widget not found</h1>", 404);
+313: });
+314: 
+315: // Oracle Studio static assets (tokens.css, style.css, app.js, etc.)
 ```
 
 ---
@@ -100,7 +100,7 @@ app.get("/worktree-drift-widget", (c) => {
 cp deliverables/worktree-drift/worktree-drift.ts /home/po-ch/agents/maw-js-server/src/worktree-drift.ts
 cp deliverables/worktree-drift/worktree-drift-widget.html /home/po-ch/agents/maw-js-server/worktree-drift-widget.html
 
-# 2. แก้ไข src/server.ts ตามบรรทัดระบุข้างต้น
+# 2. แก้ไข src/server.ts ตามบรรทัดที่ระบุข้างต้น
 
 # 3. Restart server & Smoke test
 cd /home/po-ch/agents/maw-js-server
