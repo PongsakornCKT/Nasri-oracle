@@ -1,0 +1,464 @@
+<!-- ================================================================= -->
+<!-- Tracker Improve Phase 1: Global Search & Filter Overlay (Ctrl+K)   -->
+<!-- Deliverable Block for oracle-studio/tracker.html                  -->
+<!-- ================================================================= -->
+
+<style>
+  /* ── Floating Ctrl+K Hint Badge ── */
+  .global-search-hint {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 99;
+    background: var(--bg2, #141414);
+    border: 1px solid var(--border, rgba(201,168,76,0.2));
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 11px;
+    color: var(--text-dim, #888);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    transition: all 0.2s ease;
+  }
+  .global-search-hint:hover {
+    border-color: var(--gold, #c9a84c);
+    color: var(--text, #e8e0d0);
+    box-shadow: 0 0 12px var(--gold-glow, rgba(201,168,76,0.15));
+  }
+  .global-search-kbd {
+    background: var(--bg3, #1c1c1c);
+    border: 1px solid var(--border, rgba(201,168,76,0.2));
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--gold, #c9a84c);
+  }
+
+  /* ── Search Modal Overlay Backdrop ── */
+  .tracker-search-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.82);
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    display: flex;
+    justify-content: center;
+    padding-top: 70px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .tracker-search-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ── Modal Window ── */
+  .tracker-search-modal {
+    width: 100%;
+    max-width: 640px;
+    background: var(--bg2, #141414);
+    border: 1px solid var(--border, rgba(201,168,76,0.3));
+    border-radius: 12px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 30px var(--gold-glow, rgba(201,168,76,0.15));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    max-height: 540px;
+    transform: translateY(-12px);
+    transition: transform 0.2s ease;
+  }
+  .tracker-search-overlay.active .tracker-search-modal {
+    transform: translateY(0);
+  }
+
+  /* ── Search Input Box ── */
+  .tsearch-input-box {
+    display: flex;
+    align-items: center;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border, rgba(201,168,76,0.2));
+    gap: 12px;
+    background: var(--bg, #0d0d0d);
+  }
+  .tsearch-icon {
+    font-size: 16px;
+    color: var(--gold, #c9a84c);
+  }
+  .tsearch-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text, #e8e0d0);
+  }
+  .tsearch-input::placeholder { color: var(--text-dim, #888); }
+
+  /* ── Category Filter Pills ── */
+  .tsearch-categories {
+    display: flex;
+    gap: 6px;
+    padding: 10px 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.2);
+  }
+  .tsearch-cat-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: var(--bg3, #1c1c1c);
+    border: 1px solid var(--border, rgba(201,168,76,0.2));
+    color: var(--text-dim, #888);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tsearch-cat-pill.active {
+    background: var(--gold-glow, rgba(201,168,76,0.15));
+    border-color: var(--gold, #c9a84c);
+    color: var(--gold, #c9a84c);
+    font-weight: 700;
+  }
+
+  /* ── Results List ── */
+  .tsearch-results {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .tsearch-section-header {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--gold-dim, #8a6f2e);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    margin-top: 4px;
+  }
+
+  .tsearch-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    background: rgba(255, 255, 255, 0.01);
+  }
+  .tsearch-item:hover, .tsearch-item.selected {
+    background: var(--bg3, #1c1c1c);
+    border-color: var(--border, rgba(201,168,76,0.3));
+  }
+
+  .tsearch-item-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .tsearch-item-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text, #e8e0d0);
+  }
+  .tsearch-item-sub {
+    font-size: 10px;
+    color: var(--text-dim, #888);
+  }
+  .tsearch-badge {
+    font-size: 9px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .tsearch-badge.project { background: rgba(201, 168, 76, 0.15); color: var(--gold, #c9a84c); }
+  .tsearch-badge.milestone { background: rgba(76, 175, 125, 0.15); color: var(--green, #4caf7d); }
+  .tsearch-badge.proposal { background: rgba(165, 124, 240, 0.15); color: var(--purple, #a57cf0); }
+  .tsearch-badge.agent { background: rgba(91, 156, 246, 0.15); color: var(--blue, #5b9cf6); }
+
+  .tsearch-footer {
+    padding: 10px 18px;
+    border-top: 1px solid var(--border, rgba(201,168,76,0.2));
+    background: var(--bg, #0d0d0d);
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-dim, #888);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  /* Flash Highlight Animation when jumping to element */
+  @keyframes tsearchFlash {
+    0% { background-color: rgba(201, 168, 76, 0.35); }
+    100% { background-color: transparent; }
+  }
+  .tsearch-highlight {
+    animation: tsearchFlash 1.5s ease-out;
+  }
+</style>
+
+<!-- Floating Ctrl+K Hint Button -->
+<div class="global-search-hint" onclick="openTrackerSearchModal()">
+  <span>🔍 Search Tracker...</span>
+  <span class="global-search-kbd">Ctrl + K</span>
+</div>
+
+<!-- Modal Overlay -->
+<div class="tracker-search-overlay" id="trackerSearchOverlay" onclick="handleTrackerSearchOverlayClick(event)">
+  <div class="tracker-search-modal">
+    <div class="tsearch-input-box">
+      <span class="tsearch-icon">🔍</span>
+      <input type="text" id="trackerSearchInput" class="tsearch-input" placeholder="Search Projects, Milestones, Proposals, Agents... (Esc to close)" oninput="filterTrackerSearch()" />
+      <span class="global-search-kbd">ESC</span>
+    </div>
+
+    <div class="tsearch-categories">
+      <button class="tsearch-cat-pill active" onclick="setTrackerSearchCat('all', this)">All</button>
+      <button class="tsearch-cat-pill" onclick="setTrackerSearchCat('projects', this)">Projects</button>
+      <button class="tsearch-cat-pill" onclick="setTrackerSearchCat('milestones', this)">Milestones</button>
+      <button class="tsearch-cat-pill" onclick="setTrackerSearchCat('proposals', this)">Proposals</button>
+      <button class="tsearch-cat-pill" onclick="setTrackerSearchCat('agents', this)">Agents</button>
+    </div>
+
+    <div class="tsearch-results" id="trackerSearchResults">
+      <!-- Dynamic Search Items -->
+    </div>
+
+    <div class="tsearch-footer">
+      <span>Use <strong>↑</strong> <strong>↓</strong> to navigate, <strong>Enter</strong> to jump</span>
+      <span id="trackerSearchMatchCount">0 items matched</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── XSS Sanitizer Function (same pattern as tracker.html line 1138) ──
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  let searchCategory = 'all';
+  let selectedIndex = 0;
+  let flatResults = [];
+
+  // Mock Fallback Data (used when in-memory DOM / data arrays are empty)
+  const MOCK_FALLBACK = [
+    { id: "p-maw", category: "project", title: "MAW Office Dashboard", subtitle: "Fleet management & monitoring office", badge: "PROJECT", domId: "projectList" },
+    { id: "p-tracker", category: "project", title: "Oracle Work Tracker", subtitle: "Work tracker & proposal execution", badge: "PROJECT", domId: "projectList" },
+    { id: "m-2", category: "milestone", title: "Global Search & Filter Overlay (#2)", subtitle: "Project: Oracle Tracker", badge: "MILESTONE", domId: "milestoneBody" },
+    { id: "m-41", category: "milestone", title: "System Health Widget (#41)", subtitle: "Project: MAW Office", badge: "MILESTONE", domId: "statsRow" },
+    { id: "prop-4", category: "proposal", title: "Batch Execute Selected Proposals (#4)", subtitle: "Proposed by nasri-oracle", badge: "PROPOSAL", domId: "proposalsGrid" },
+    { id: "agent-nasri", category: "agent", title: "nasri-oracle", subtitle: "Executive Secretary (Right Hand of Ma'at)", badge: "AGENT", domId: "sidebarAgents" },
+    { id: "agent-pa", category: "agent", title: "pa-oracle", subtitle: "Lead Orchestrator (Eye of Ma'at)", badge: "AGENT", domId: "sidebarAgents" }
+  ];
+
+  window.openTrackerSearchModal = function() {
+    const overlay = document.getElementById('trackerSearchOverlay');
+    if (!overlay) return;
+    overlay.classList.add('active');
+    const input = document.getElementById('trackerSearchInput');
+    if (input) {
+      input.value = '';
+      input.focus();
+    }
+    filterTrackerSearch();
+  };
+
+  window.closeTrackerSearchModal = function() {
+    const overlay = document.getElementById('trackerSearchOverlay');
+    if (overlay) overlay.classList.remove('active');
+  };
+
+  window.handleTrackerSearchOverlayClick = function(e) {
+    if (e.target.id === 'trackerSearchOverlay') {
+      closeTrackerSearchModal();
+    }
+  };
+
+  window.setTrackerSearchCat = function(cat, btn) {
+    searchCategory = cat;
+    document.querySelectorAll('.tsearch-cat-pill').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    filterTrackerSearch();
+  };
+
+  // Collect data from actual tracker.html DOM elements
+  function collectTrackerData() {
+    const items = [];
+
+    // 1. Projects (from #projectList .project-item)
+    document.querySelectorAll('#projectList .project-item').forEach(el => {
+      const name = el.querySelector('.project-name')?.textContent || el.textContent || '';
+      const meta = el.querySelector('.project-meta')?.textContent || 'Project';
+      const pid = el.getAttribute('data-pid') || el.getAttribute('data-project-id') || '';
+      if (name) {
+        items.push({ id: pid, category: "project", title: name.trim(), subtitle: meta.trim(), badge: "PROJECT", domEl: el });
+      }
+    });
+
+    // 2. Milestones (from #milestoneBody tr)
+    document.querySelectorAll('#milestoneBody tr').forEach((el, idx) => {
+      const text = el.textContent || '';
+      if (text.trim()) {
+        const firstCol = el.querySelector('td')?.textContent || text.slice(0, 40);
+        items.push({ id: 'ms-' + idx, category: "milestone", title: firstCol.trim(), subtitle: "Milestone Task", badge: "MILESTONE", domEl: el });
+      }
+    });
+
+    // 3. Proposals (from #proposalsGrid .proposal-card)
+    document.querySelectorAll('#proposalsGrid .proposal-card').forEach((el, idx) => {
+      const title = el.querySelector('.proposal-card-title')?.textContent || el.querySelector('.proposal-title')?.textContent || el.textContent || '';
+      const agent = el.querySelector('.proposal-card-agent')?.textContent || 'Proposal';
+      if (title) {
+        items.push({ id: 'prop-' + idx, category: "proposal", title: title.trim(), subtitle: agent.trim(), badge: "PROPOSAL", domEl: el });
+      }
+    });
+
+    // 4. Agents (from .agent-card / .agent-item / #sidebarAgents)
+    document.querySelectorAll('.agent-card, .agent-item, #sidebarAgents > div').forEach((el, idx) => {
+      const name = el.querySelector('.agent-name')?.textContent || el.textContent || '';
+      if (name.trim()) {
+        items.push({ id: 'agent-' + idx, category: "agent", title: name.trim(), subtitle: "Fleet Agent", badge: "AGENT", domEl: el });
+      }
+    });
+
+    // If no DOM elements found (standalone mode), use MOCK_FALLBACK
+    return items.length > 0 ? items : MOCK_FALLBACK;
+  }
+
+  window.filterTrackerSearch = function() {
+    const input = document.getElementById('trackerSearchInput');
+    const query = input ? input.value.trim().toLowerCase() : '';
+    const allData = collectTrackerData();
+
+    // Group & limit 5 per category
+    const grouped = { project: [], milestone: [], proposal: [], agent: [] };
+
+    allData.forEach(item => {
+      const catMatch = searchCategory === 'all' || item.category === searchCategory || (searchCategory === 'projects' && item.category === 'project') || (searchCategory === 'milestones' && item.category === 'milestone') || (searchCategory === 'proposals' && item.category === 'proposal') || (searchCategory === 'agents' && item.category === 'agent');
+      const textMatch = !query || item.title.toLowerCase().includes(query) || item.subtitle.toLowerCase().includes(query);
+
+      if (catMatch && textMatch) {
+        if (grouped[item.category] && grouped[item.category].length < 5) {
+          grouped[item.category].push(item);
+        }
+      }
+    });
+
+    flatResults = [...grouped.project, ...grouped.milestone, ...grouped.proposal, ...grouped.agent];
+    selectedIndex = 0;
+    renderTrackerSearchResults(grouped);
+  };
+
+  function renderTrackerSearchResults(grouped) {
+    const container = document.getElementById('trackerSearchResults');
+    const countEl = document.getElementById('trackerSearchMatchCount');
+    if (!container) return;
+
+    container.innerHTML = '';
+    if (countEl) countEl.textContent = `${flatResults.length} items matched`;
+
+    if (flatResults.length === 0) {
+      container.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-dim,#888);font-size:12px">ไม่พบข้อมูลที่ค้นหา</div>';
+      return;
+    }
+
+    let globalIdx = 0;
+    const catTitles = { project: "Projects", milestone: "Milestones", proposal: "Proposals", agent: "Fleet Agents" };
+
+    for (const [cat, list] of Object.entries(grouped)) {
+      if (list.length === 0) continue;
+
+      const secHeader = document.createElement('div');
+      secHeader.className = 'tsearch-section-header';
+      secHeader.textContent = catTitles[cat] || cat;
+      container.appendChild(secHeader);
+
+      list.forEach(item => {
+        const itemIdx = globalIdx++;
+        const row = document.createElement('div');
+        row.className = `tsearch-item ${itemIdx === selectedIndex ? 'selected' : ''}`;
+        row.onclick = () => jumpToElement(item);
+
+        row.innerHTML = `
+          <div class="tsearch-item-info">
+            <div class="tsearch-item-title">${escHtml(item.title)}</div>
+            <div class="tsearch-item-sub">${escHtml(item.subtitle)}</div>
+          </div>
+          <span class="tsearch-badge ${escHtml(item.category)}">${escHtml(item.badge)}</span>
+        `;
+        container.appendChild(row);
+      });
+    }
+  }
+
+  function jumpToElement(item) {
+    closeTrackerSearchModal();
+    let target = item.domEl;
+    if (!target && item.domId) {
+      target = document.getElementById(item.domId);
+    }
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.classList.add('tsearch-highlight');
+      setTimeout(() => target.classList.remove('tsearch-highlight'), 1500);
+    }
+  }
+
+  // Global Keyboard Event Listener
+  window.addEventListener('keydown', function(e) {
+    // Ctrl+K or Cmd+K
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      e.stopPropagation();
+      openTrackerSearchModal();
+      return;
+    }
+
+    const overlay = document.getElementById('trackerSearchOverlay');
+    if (!overlay || !overlay.classList.contains('active')) return;
+
+    if (e.key === 'Escape') {
+      closeTrackerSearchModal();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (flatResults.length > 0) {
+        selectedIndex = (selectedIndex + 1) % flatResults.length;
+        filterTrackerSearch();
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (flatResults.length > 0) {
+        selectedIndex = (selectedIndex - 1 + flatResults.length) % flatResults.length;
+        filterTrackerSearch();
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (flatResults[selectedIndex]) {
+        jumpToElement(flatResults[selectedIndex]);
+      }
+    }
+  });
+})();
+</script>
