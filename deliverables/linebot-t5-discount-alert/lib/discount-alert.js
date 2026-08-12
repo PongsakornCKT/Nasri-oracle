@@ -1,8 +1,11 @@
 'use strict';
 
 /**
- * discount-alert.js — T5 Discount Alert Engine (#B5)
- * Checks if applied discount reduces final profit margin below 10% (P'Phong Decision B5).
+ * discount-alert.js — T5v2 Discount Alert Engine (#B5)
+ * Checks if applied discount (parsed via spec.discount in parse-quotation-spec.js:205)
+ * reduces final profit margin below 10% (P'Phong Decision B5).
+ * Falls back to T1 margin alert if discount variable is 0.
+ *
  * Rules: ALERT ONLY (DO NOT BLOCK), notify sales in reply & notifyAdmin.
  *
  * Author: Nasri Oracle — Right Hand of Ma'at 𓂀
@@ -23,7 +26,7 @@ module.exports = function createDiscountAlert(opts) {
       return { isViolation: false, finalMarginPct: 0 };
     }
 
-    var netPrice = sellingPrice - discountAmount;
+    var netPrice = sellingPrice;
     var netProfit = normalProfit - discountAmount;
     var finalMarginPct = (netProfit / netPrice) * 100;
     var isViolation = finalMarginPct < thresholdPct;
