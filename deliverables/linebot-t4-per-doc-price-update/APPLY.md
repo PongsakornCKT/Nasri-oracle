@@ -1,4 +1,4 @@
-# T4v3 — Per-Document Price Override Guide (#14 - REVISION 3)
+# T4v4 — Per-Document Price Override Guide (#14 - REVISION 4)
 
 **Target Repository**: `ai.enervia.co.th` / `pa-Oracle v2` (`ψ/active/qsolar/ai.enervia.co.th/`)  
 **Target Files**: `lib/doc-price-override.js` (ใหม่), `app.js`  
@@ -9,14 +9,13 @@
 
 ---
 
-## 🎯 สรุปสิ่งที่ทำ (แก้ไขตาม Feedback pa Oracle REJECT T4v2)
+## 🎯 สรุปสิ่งที่ทำ (แก้ไขตาม Root Cause Analysis ของ pa Oracle)
 
-1. **ย้ายเป็น Top-level Command บริเวณเดียวกับ "ปิดงาน" (ก่อน `// View old BOM PDF by name`)**:
-   - แก้ไข Bug Placement เดิมที่วางหลัง `return;` ใน `case update_price` (ซึ่งเป็น Dead Code)
-   - วางเป็นคำสั่งอิสระระดับบนสุดก่อนบล็อกค้นหา BOM
-2. **โหลดข้อมูลและอัปเดตตรงผ่าน `_qtCrud` (`getQuotationDetail` / `editItem`)**:
-   - ไม่ reuse `_installerPdfBridge.resolveInstallerData` และไม่ใช้อ้างอิง `_pricePinning`
-   - โหลดรายละเอียดใบเสนอราคาและอัปเดต `unit_cost` / `total_cost` ของรายการใน `nasri.sqlite` โดยตรงผ่าน `_qtCrud.editItem`
+1. **เขียน SQLite ตรงผ่าน `_persistence.sqliteDb` (ห้ามพึ่ง `qtCrud` เด็ดขาด)**:
+   - สแกน Root Cause: `qtCrud` เรียกใช้ `bun + quotation-crud.ts` ซึ่งไม่มีใน Deploy Manifest บน Production (จะทำให้เกิด `ENOENT`)
+   - แก้ไขโดยใช้ Pattern เดียวกับ `quote-followup.js`: อัปเดตตาราง `quotation_items` และ `quotations` ใน `nasri.sqlite` ผ่าน `_persistence.sqliteDb` โดยตรง ไร้การพึ่งพา Subprocess
+2. **วางเป็น Top-level Command ก่อน `// View old BOM PDF by name`**:
+   - วางเป็นคำสั่งอิสระระดับบนสุดรองรับ `"แก้ราคา <item> <ราคาใหม่> ใน <QT id>"`
 3. **บันทึก Audit Log โปร่งใส (`doc_price_audit`)**:
    - บันทึกประวัติการแก้ไขราคาทุกครั้งลงตาราง `doc_price_audit` (ใคร / ใบไหน / อุปกรณ์ใด / ราคาเดิม -> ราคาใหม่)
 4. **กติกาเหล็กตามสั่งพี่พง**:
@@ -37,8 +36,9 @@ cp deliverables/linebot-t4-per-doc-price-update/lib/doc-price-override.js "/mnt/
 ### Step 2: แทรกใน `app.js` (ประมาณบรรทัด 866)
 
 ```javascript
-// T4v3 (#14): Per-document price override engine (P'Phong decision A3: NEVER write back to Google Sheets)
+// T4v4 (#14): Per-document price override engine (writes directly to _persistence.sqliteDb)
 var _docPriceOverride = require('./lib/doc-price-override')({
+  db: _persistence.sqliteDb,
   sqlitePath: SQLITE_PATH
 });
 ```
@@ -58,7 +58,7 @@ var _docPriceOverride = require('./lib/doc-price-override')({
 
 #### AFTER Replacement:
 ```javascript
-  // T4v3 (#14): Top-level Per-document price override command "แก้ราคา <item> <ราคาใหม่> ใน <QT id>"
+  // T4v4 (#14): Top-level Per-document price override command "แก้ราคา <item> <ราคาใหม่> ใน <QT id>"
   var _docPriceM = lo.match(/^แก้ราคา\s+(.+)\s+(\d+(?:\.\d+)?)\s+ใน\s+(.+)$/i);
   if (_docPriceM) {
     if (!isAdminUser(_userId)) { await rText(rt, 'คำสั่งนี้ใช้ได้เฉพาะ admin ครับ'); return; }
@@ -66,15 +66,12 @@ var _docPriceOverride = require('./lib/doc-price-override')({
     var _newPrice = parseFloat(_docPriceM[2]);
     var _targetDocId = _docPriceM[3].trim();
 
-    _docPriceOverride.updateDocumentItemPrice(_targetDocId, _itemName, _newPrice, _userId, _qtCrud, SQLITE_PATH).then(function(_overrideRes) {
-      if (_overrideRes.ok) {
-        rText(rt, '✅ แก้ไขราคาสำเร็จ (' + _targetDocId + '):\n• ' + _overrideRes.item_name + ': ฿' + _overrideRes.old_price.toLocaleString() + ' ➔ ฿' + _newPrice.toLocaleString() + '\n• ยอดรวมใหม่: ฿' + _overrideRes.new_total.toLocaleString() + '\n\n*(ปรับปรุงเฉพาะเอกสารนี้ใน nasri.sqlite เรียบร้อย ไม่กระทบตารางราคากลาง)*');
-      } else {
-        rText(rt, '❌ ' + _overrideRes.error);
-      }
-    }).catch(function(e) {
-      rText(rt, '❌ เกิดข้อผิดพลาดในการอัปเดตราคา: ' + e.message);
-    });
+    var _overrideRes = _docPriceOverride.updateDocumentItemPrice(_targetDocId, _itemName, _newPrice, _userId);
+    if (_overrideRes.ok) {
+      await rText(rt, '✅ แก้ไขราคาสำเร็จ (' + _targetDocId + '):\n• ' + (_overrideRes.item_name || _itemName) + ': ฿' + _overrideRes.old_price.toLocaleString() + ' ➔ ฿' + _newPrice.toLocaleString() + '\n• ยอดรวมใหม่: ฿' + _overrideRes.new_total.toLocaleString() + '\n\n*(ปรับปรุงเฉพาะเอกสารนี้ใน nasri.sqlite เรียบร้อย ไม่กระทบตารางราคากลาง)*');
+    } else {
+      await rText(rt, '❌ ' + _overrideRes.error);
+    }
     return;
   }
 
