@@ -1,15 +1,15 @@
-# T6 — Win/Loss Deal Tracking Guide (#B9)
+# T6v2 — Win/Loss Deal Tracking Guide (#B9 - REVISION 2)
 
 **Target Repository**: `ai.enervia.co.th` / `pa-Oracle v2` (`ψ/active/qsolar/ai.enervia.co.th/`)  
 **Target Files**: `lib/winloss-tracker.js` (ใหม่), `app.js`  
-**Grep Verified Line Numbers**: `app.js:3305` (ในคำสั่ง Admin LINE)  
+**Grep Verified Line Numbers**: `app.js:3305-3310` (ในคำสั่ง Admin LINE ก่อนบล็อก `// View old BOM PDF by name`)  
 **Business Decision (พี่พงเคาะ B9)**: หมวดเหตุผลแพ้ 4 หมวดเป๊ะ (**แพง / คู่แข่ง / เลื่อน / อื่นๆ**)  
 **Author**: Nasri Oracle — Right Hand of Ma'at 𓂀  
 **Date**: 2026-08-12  
 
 ---
 
-## 🎯 สรุปสิ่งที่ทำ
+## 🎯 สรุปสิ่งที่ทำ (แก้ไขตาม Feedback pa Oracle)
 
 1. **ระบบบันทึก Win/Loss และหมวดเหตุผล (`winloss-tracker.js`)**:
    - รองรับคำสั่งปิดงาน:
@@ -33,7 +33,7 @@ cp deliverables/linebot-t6-winloss-tracking/lib/winloss-tracker.js "/mnt/c/Users
 ### Step 2: แทรกใน `app.js` (ประมาณบรรทัด 866)
 
 ```javascript
-// T6 (#B9): Win/loss deal tracking engine (P'Phong decision B9: 4 reason categories)
+// T6v2 (#B9): Win/loss deal tracking engine (P'Phong decision B9: 4 reason categories)
 var _winLossTracker = require('./lib/winloss-tracker')({
   sqlitePath: SQLITE_PATH
 });
@@ -41,18 +41,20 @@ var _winLossTracker = require('./lib/winloss-tracker')({
 
 ---
 
-### Step 3: แทรกคำสั่ง LINE ปิดงาน และ "close rate" ใน `app.js` (บรรทัด 3305 Verified by Grep)
+### Step 3: แทรกคำสั่ง LINE ปิดงาน และ "close rate" ใน `app.js` (`app.js:3305-3310` Verified by Grep)
 
-#### BEFORE Context (`app.js:3306-3309` Verified by Grep):
+#### BEFORE Context (`app.js:3305-3310` Verified by Grep):
 ```javascript
   // View old BOM PDF by name
   if ((lo.indexOf('ดู') >= 0) && (lo.indexOf('bom') >= 0 || lo.indexOf('pdf') >= 0)) {
     var viewQuery = text.replace(/นัด|nasri|ไอ่นัด|ดู|view|bom|pdf/gi, '').trim();
+    if (viewQuery) {
+      var vwResults = searchBoms(viewQuery);
 ```
 
 #### AFTER Replacement:
 ```javascript
-  // T6 (#B9): Win/Loss deal tracking command
+  // T6v2 (#B9): Win/Loss deal tracking command
   var _closeM = lo.match(/^ปิดงาน\s+(.+?)\s+(ได้งาน|ไม่ได้(?:\s+(.+))?)$/i);
   if (_closeM) {
     var _closeQtId = _closeM[1].trim();
@@ -74,7 +76,7 @@ var _winLossTracker = require('./lib/winloss-tracker')({
     return;
   }
 
-  // T6 (#B9): Admin "close rate" summary command from real SQLite data
+  // T6v2 (#B9): Admin "close rate" summary command from real SQLite data
   if (/^close\s*rate$/i.test(lo)) {
     if (!isAdminUser(_userId)) { await rText(rt, 'คำสั่งนี้ใช้ได้เฉพาะ admin ครับ'); return; }
     var _crStats = _winLossTracker.getCloseRateSummary();
@@ -96,6 +98,8 @@ var _winLossTracker = require('./lib/winloss-tracker')({
   // View old BOM PDF by name
   if ((lo.indexOf('ดู') >= 0) && (lo.indexOf('bom') >= 0 || lo.indexOf('pdf') >= 0)) {
     var viewQuery = text.replace(/นัด|nasri|ไอ่นัด|ดู|view|bom|pdf/gi, '').trim();
+    if (viewQuery) {
+      var vwResults = searchBoms(viewQuery);
 ```
 
 ---

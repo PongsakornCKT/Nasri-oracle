@@ -1,5 +1,5 @@
 /**
- * test-t6.js — Verification Test Suite for T6 Win/Loss Deal Tracking (#B9)
+ * test-t6.js — Verification Test Suite for T6v2 Win/Loss Deal Tracking (#B9 - REVISION 2)
  * Runs standalone using Node.js / Bun. Exits 0 on clean pass, 1 on failure.
  */
 
@@ -33,7 +33,7 @@ class MockSqliteDb {
 const createWinLossTracker = require('./lib/winloss-tracker');
 
 async function runTests() {
-  console.log('🧪 [T6 Test] Starting test suite...');
+  console.log('🧪 [T6v2 Test] Starting test suite...');
 
   const mockDb = new MockSqliteDb();
   const tracker = createWinLossTracker({ db: mockDb });
@@ -61,10 +61,10 @@ async function runTests() {
   assert.strictEqual(summary.category_breakdown['แพง'], 1, 'Loss breakdown for แพง should be 1');
   assert.strictEqual(summary.category_breakdown['เลื่อน'], 1, 'Loss breakdown for เลื่อน should be 1');
 
-  console.log('✅ [T6 Test] All 3 assertion checks PASSED cleanly!');
+  console.log('✅ [T6v2 Test] All 3 assertion checks PASSED cleanly!');
 }
 
 runTests().catch(err => {
-  console.error('❌ [T6 Test] FAILED:', err);
+  console.error('❌ [T6v2 Test] FAILED:', err);
   process.exit(1);
 });

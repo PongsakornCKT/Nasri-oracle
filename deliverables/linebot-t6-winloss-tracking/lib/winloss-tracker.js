@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * winloss-tracker.js — T6 Win/Loss Deal Tracking Engine (#B9)
+ * winloss-tracker.js — T6v2 Win/Loss Deal Tracking Engine (#B9 - REVISION 2)
  * Tracks win/loss status and reason taxonomy for quotations in SQLite `qt_outcomes`.
  * P'Phong Decision B9 Taxonomy:
  *   1. "แพง" (price_too_high)
