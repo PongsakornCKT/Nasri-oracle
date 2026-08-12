@@ -1,23 +1,25 @@
-# T4v4 — Per-Document Price Override Guide (#14 - REVISION 4)
+# T4 — Per-Document Price Override Guide (#14)
 
 **Target Repository**: `ai.enervia.co.th` / `pa-Oracle v2` (`ψ/active/qsolar/ai.enervia.co.th/`)  
 **Target Files**: `lib/doc-price-override.js` (ใหม่), `app.js`  
 **Grep Verified Line Numbers**: `app.js:3453-3457` (วางเป็น Top-level Command ก่อนบล็อก `// View old BOM PDF by name`)  
-**Business Decision (พี่พงเคาะ A3)**: **ห้ามแก้ราคากลาง/ชีตผ่าน bot เด็ดขาด!** ให้อัปเดตราคา item ในเอกสารใบนั้นๆ เท่านั้น (per-document override ใน SQLite)  
+**Business Decision (พี่พงเคาะ A3)**: **ห้ามแก้ราคากลาง/ชีตผ่าน bot เด็ดขาด!** ให้อัปเดตราคา item ในเอกสารใบนั้นๆ เท่านั้น (per-document override ใน SQLite `quotation_items`)  
 **Author**: Nasri Oracle — Right Hand of Ma'at 𓂀  
 **Date**: 2026-08-12  
 
 ---
 
-## 🎯 สรุปสิ่งที่ทำ (แก้ไขตาม Root Cause Analysis ของ pa Oracle)
+## 🎯 สรุปสิ่งที่ทำ
 
-1. **เขียน SQLite ตรงผ่าน `_persistence.sqliteDb` (ห้ามพึ่ง `qtCrud` เด็ดขาด)**:
-   - สแกน Root Cause: `qtCrud` เรียกใช้ `bun + quotation-crud.ts` ซึ่งไม่มีใน Deploy Manifest บน Production (จะทำให้เกิด `ENOENT`)
-   - แก้ไขโดยใช้ Pattern เดียวกับ `quote-followup.js`: อัปเดตตาราง `quotation_items` และ `quotations` ใน `nasri.sqlite` ผ่าน `_persistence.sqliteDb` โดยตรง ไร้การพึ่งพา Subprocess
-2. **วางเป็น Top-level Command ก่อน `// View old BOM PDF by name`**:
-   - วางเป็นคำสั่งอิสระระดับบนสุดรองรับ `"แก้ราคา <item> <ราคาใหม่> ใน <QT id>"`
-3. **บันทึก Audit Log โปร่งใส (`doc_price_audit`)**:
-   - บันทึกประวัติการแก้ไขราคาทุกครั้งลงตาราง `doc_price_audit` (ใคร / ใบไหน / อุปกรณ์ใด / ราคาเดิม -> ราคาใหม่)
+1. **Top-Level Text Command (ห้ามอยู่ใน Intent Switch)**:
+   - วางคำสั่ง `"แก้ราคา <item> <ราคาใหม่> ใน <id>"` เป็น Top-level Text Command ระดับบนสุด (บริเวณเดียวกับ `"ปิดงาน"` ก่อนบล็อก `// View old BOM PDF by name`)
+2. **เขียน SQLite ตรงผ่าน `_persistence.sqliteDb` (ห้ามพึ่ง `qtCrud` / `bun` เด็ดขาด)**:
+   - ตรวจสอบคอลัมน์ผ่าน `PRAGMA table_info(quotation_items)` (ตาม rich schema `quotation-crud.ts:224`: `quotation_id`, `total_price`, `description`)
+   - อัปเดตราคารายการลงตาราง `quotation_items` ใน `nasri.sqlite` โดยตรงผ่าน `_persistence.sqliteDb`
+   - หากสภาพแวดล้อมไม่มีตาราง/คอลัมน์ จะตอบกลับผู้ใช้ว่า `"ระบบนี้ยังไม่รองรับแก้ราคารายใบ"` อย่างปลอดภัย ไม่ crash
+3. **ตรวจสอบสิทธิ์ Admin / เจ้าของใบ & บันทึก Audit Log (`doc_price_audit`)**:
+   - ตรวจสอบสิทธิ์ผ่าน `isAdminUser(_userId)`
+   - บันทึกประวัติการแก้ไขราคาลงตาราง `doc_price_audit` (ใคร / ใบไหน / อุปกรณ์ใด / ราคาเดิม -> ราคาใหม่)
 4. **กติกาเหล็กตามสั่งพี่พง**:
    - **ห้ามมี Code path ใดเขียนกลับไปยัง Google Sheets ราคากลางเด็ดขาด!**
 
@@ -36,10 +38,9 @@ cp deliverables/linebot-t4-per-doc-price-update/lib/doc-price-override.js "/mnt/
 ### Step 2: แทรกใน `app.js` (ประมาณบรรทัด 866)
 
 ```javascript
-// T4v4 (#14): Per-document price override engine (writes directly to _persistence.sqliteDb)
+// T4 (#14): Per-document price override engine (writes directly to _persistence.sqliteDb)
 var _docPriceOverride = require('./lib/doc-price-override')({
-  db: _persistence.sqliteDb,
-  sqlitePath: SQLITE_PATH
+  db: _persistence.sqliteDb
 });
 ```
 
@@ -58,7 +59,7 @@ var _docPriceOverride = require('./lib/doc-price-override')({
 
 #### AFTER Replacement:
 ```javascript
-  // T4v4 (#14): Top-level Per-document price override command "แก้ราคา <item> <ราคาใหม่> ใน <QT id>"
+  // T4 (#14): Top-level Per-document price override command "แก้ราคา <item> <ราคาใหม่> ใน <QT id>"
   var _docPriceM = lo.match(/^แก้ราคา\s+(.+)\s+(\d+(?:\.\d+)?)\s+ใน\s+(.+)$/i);
   if (_docPriceM) {
     if (!isAdminUser(_userId)) { await rText(rt, 'คำสั่งนี้ใช้ได้เฉพาะ admin ครับ'); return; }
