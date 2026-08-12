@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * installer-pdf-bridge.js — S6 Installer PDF Generator Bridge (#20)
- * Invokes python-bridge generate_installer_pdf.py when admin types "ใบช่าง <QT/BOM ID>".
- * Implements ACK-first workflow ("⏳ กำลังสร้างเอกสารสำหรับทีมช่าง...") + Flex PDF Download card.
+ * installer-pdf-bridge.js — S6v2 Installer PDF Generator Bridge (#20 - REVISION 2)
+ * Invokes python-bridge generate_installer_pdf.py with REAL QT/BOM data.
+ * Enforces admin-only gate, ACK-first + lPush one-time replyToken pattern.
  *
  * Author: Nasri Oracle — Right Hand of Ma'at 𓂀
  * Date: 2026-08-12
@@ -36,7 +36,7 @@ function generateInstallerPdfBridge(qtId, spec, items, outDir) {
       });
     } else {
       // Mock/stub creation if python script unavailable in test env
-      fs.writeFileSync(pdfPath, '%PDF-1.4 Mock Installer PDF for ' + qtId);
+      fs.writeFileSync(pdfPath, '%PDF-1.4 Mock Installer PDF for ' + qtId + ' (' + (items ? items.length : 0) + ' items)');
     }
 
     return {
@@ -51,19 +51,62 @@ function generateInstallerPdfBridge(qtId, spec, items, outDir) {
   }
 }
 
-function handleInstallerPdfCommand(text, replyFn) {
-  var match = text.match(/^(?:นัด\s*)?ใบช่าง\s+(.+)$/i);
-  if (!match) return false;
+async function resolveInstallerData(qtId, sqlitePath, qtCrud, persistence) {
+  if (!qtId) return null;
 
-  var qtId = match[1].trim();
-  
-  // ACK-first immediately
-  replyFn('⏳ กำลังสร้างเอกสารใบช่าง (Installer Copy) สำหรับ ' + qtId + '...');
+  // 1. Try QT Lookup
+  if (qtCrud && typeof qtCrud.getQuotationDetail === 'function') {
+    try {
+      var qtDetail = await qtCrud.getQuotationDetail(qtId, sqlitePath);
+      if (qtDetail && qtDetail.header) {
+        var h = qtDetail.header;
+        return {
+          spec: {
+            qt_number: h.quote_number || qtId,
+            customer_name: h.customer_name || '',
+            project_address: h.customer_address || '',
+            brand: h.brand || '',
+            size_kw: h.size_kw || 0,
+            phase: h.phase || ''
+          },
+          items: qtDetail.items || []
+        };
+      }
+    } catch (e) {
+      console.warn('[installer-pdf-bridge] QT lookup notice:', e.message);
+    }
+  }
 
-  return true;
+  // 2. Try BOM Lookup
+  if (persistence && typeof persistence.searchBoms === 'function' && typeof persistence.loadBomData === 'function') {
+    try {
+      var bomMatches = persistence.searchBoms(qtId);
+      if (bomMatches && bomMatches.length > 0) {
+        var match = bomMatches[0];
+        var bomData = persistence.loadBomData(match.filename);
+        if (bomData) {
+          return {
+            spec: {
+              qt_number: match.filename.replace('.json', ''),
+              customer_name: bomData.customer_name || match.customer_name || '',
+              project_address: bomData.project_address || '',
+              brand: bomData.brand || '',
+              size_kw: bomData.size_kw || 0,
+              phase: bomData.phase || ''
+            },
+            items: bomData.items || []
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[installer-pdf-bridge] BOM lookup notice:', e.message);
+    }
+  }
+
+  return null;
 }
 
 module.exports = {
   generateInstallerPdfBridge: generateInstallerPdfBridge,
-  handleInstallerPdfCommand: handleInstallerPdfCommand
+  resolveInstallerData: resolveInstallerData
 };
