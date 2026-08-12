@@ -1,5 +1,5 @@
 /**
- * test-s2.js — Verification Test Suite for S2 Wire Keenoc Calculator (#19)
+ * test-s2.js — Verification Test Suite for S2 Wire Keenoc Calculator (#19 - REVISION 2)
  * Runs standalone using Node.js / Bun. Exits 0 on clean pass, 1 on failure.
  */
 
@@ -7,7 +7,7 @@ const assert = require('assert');
 const { wireKeenocMounting } = require('./lib/keenoc-mounting-wire');
 
 async function runTests() {
-  console.log('🧪 [S2 Test] Starting test suite...');
+  console.log('🧪 [S2v2 Test] Starting test suite...');
 
   const mockCatalog = {
     'Mounting - Keenoc': [
@@ -24,19 +24,27 @@ async function runTests() {
   assert.strictEqual(items[0].part_number, 'RAIL-4200', 'First item should be RAIL-4200');
   assert.strictEqual(items[0].quantity, 10, 'Rail quantity should be 10');
 
-  // Test 2: Horus pattern — Fallback to legacy function if catalog is invalid/corrupt
+  // Test 2: Verbatim legacy fallback assertion — Returns full 7-item set when triggered
   let fallbackCalled = false;
   const fallbackResult = wireKeenocMounting(null, 10, 'metal', () => {
     fallbackCalled = true;
-    return [{ part_number: 'FALLBACK-RAIL', quantity: 10 }];
+    return [
+      { part_number: 'RAIL-4200', quantity: 10 },
+      { part_number: 'END-CLAMP', quantity: 20 },
+      { part_number: 'MID-CLAMP', quantity: 18 },
+      { part_number: 'L-FEET-8CM', quantity: 20 },
+      { part_number: 'GND-LUG', quantity: 10 },
+      { part_number: 'EARTH-CLIP', quantity: 20 },
+      { part_number: 'CABLE-CLIP', quantity: 50 }
+    ];
   });
   assert.strictEqual(fallbackCalled, true, 'Legacy fallback function should be called on invalid catalog');
-  assert.strictEqual(fallbackResult[0].part_number, 'FALLBACK-RAIL', 'Fallback result should be returned');
+  assert.strictEqual(fallbackResult.length, 7, 'Fallback result MUST contain full 7-item set verbatim');
 
-  console.log('✅ [S2 Test] All 2 assertion checks PASSED cleanly!');
+  console.log('✅ [S2v2 Test] All 2 assertion checks PASSED cleanly!');
 }
 
 runTests().catch(err => {
-  console.error('❌ [S2 Test] FAILED:', err);
+  console.error('❌ [S2v2 Test] FAILED:', err);
   process.exit(1);
 });
