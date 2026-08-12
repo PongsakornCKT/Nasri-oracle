@@ -1,5 +1,5 @@
 /**
- * test-t4.js — Verification Test Suite for T4v2 Per-Document Price Override (#14 - REVISION 2)
+ * test-t4.js — Verification Test Suite for T4v3 Per-Document Price Override (#14 - REVISION 3)
  * Runs standalone using Node.js / Bun. Exits 0 on clean pass, 1 on failure.
  */
 
@@ -28,26 +28,34 @@ class MockSqliteDb {
 const createDocPriceOverride = require('./lib/doc-price-override');
 
 async function runTests() {
-  console.log('🧪 [T4v2 Test] Starting test suite...');
+  console.log('🧪 [T4v3 Test] Starting test suite...');
 
   const mockDb = new MockSqliteDb();
   const overrideEngine = createDocPriceOverride({ db: mockDb });
 
-  const docId = 'QT-2026-0812-005';
-  const originalItems = [
-    { part_number: 'SUN2000-10KTL-M1', part_name: 'Inverter Huawei 10kW', quantity: 1, unit_cost: 38000, total_cost: 38000 },
-    { part_number: 'RAIL-4200', part_name: 'Keenoc Aluminum Rail', quantity: 10, unit_cost: 480, total_cost: 4800 }
-  ];
+  const docId = 'LINE-QT-2026-0812-005';
+  const mockQtCrud = {
+    getQuotationDetail: async (qtId) => ({
+      header: { quote_number: qtId, grand_total: 42800 },
+      items: [
+        { id: 1, part_number: 'SUN2000-10KTL-M1', part_name: 'Inverter Huawei 10kW', quantity: 1, unit_cost: 38000, total_cost: 38000 },
+        { id: 2, part_number: 'RAIL-4200', part_name: 'Keenoc Aluminum Rail', quantity: 10, unit_cost: 480, total_cost: 4800 }
+      ]
+    }),
+    editItem: async (qtId, itemId, changes, opts) => {
+      assert.strictEqual(qtId, 'LINE-QT-2026-0812-005', 'Quotation ID must match');
+      assert.strictEqual(itemId, 1, 'Target item ID should be 1');
+      assert.strictEqual(changes.unit_cost, 36000, 'unit_cost change must be 36000');
+      return { total_snapshot: 40800 };
+    }
+  };
 
-  // Test 1: Update item price in doc updates unit_cost and recalculates total_cost
-  const res = overrideEngine.updateDocumentItemPrice(docId, 'Huawei', 36000, 'U_ADMIN', originalItems);
-  assert.strictEqual(res.ok, true, 'Price override should succeed');
-  assert.strictEqual(res.updated_items, 1, 'Should update exactly 1 matching item');
+  // Test 1: Update item price via _qtCrud.editItem directly
+  const res = await overrideEngine.updateDocumentItemPrice(docId, 'Huawei', 36000, 'U_ADMIN', mockQtCrud, '/tmp/test.db');
+  assert.strictEqual(res.ok, true, 'Price override should succeed via _qtCrud');
   assert.strictEqual(res.old_price, 38000, 'Old price should be 38000');
   assert.strictEqual(res.new_price, 36000, 'New price should be 36000');
-  assert.strictEqual(originalItems[0].unit_cost, 36000, 'Item unit_cost should be updated in array');
-  assert.strictEqual(originalItems[0].total_cost, 36000, 'Item total_cost should be recalculated');
-  assert.strictEqual(res.new_total, 40800, 'Document total should be 36000 + 4800 = 40800');
+  assert.strictEqual(res.new_total, 40800, 'Document total should update to 40800');
 
   // Test 2: Audit log is recorded in SQLite
   assert.strictEqual(mockDb.auditLogs.length, 1, 'Audit log must record 1 entry');
@@ -55,15 +63,15 @@ async function runTests() {
   assert.strictEqual(mockDb.auditLogs[0].old_price, 38000, 'Audit log old_price must match');
   assert.strictEqual(mockDb.auditLogs[0].new_price, 36000, 'Audit log new_price must match');
 
-  // Test 3: Updating non-existent item returns error cleanly without mutating array
-  const errRes = overrideEngine.updateDocumentItemPrice(docId, 'NonExistentItem', 9999, 'U_ADMIN', originalItems);
+  // Test 3: Updating non-existent item returns error cleanly
+  const errRes = await overrideEngine.updateDocumentItemPrice(docId, 'NonExistentItem', 9999, 'U_ADMIN', mockQtCrud, '/tmp/test.db');
   assert.strictEqual(errRes.ok, false, 'Non-existent item should return ok: false');
   assert.ok(errRes.error.includes('not found'), 'Error message should indicate item not found');
 
-  console.log('✅ [T4v2 Test] All 3 assertion checks PASSED cleanly!');
+  console.log('✅ [T4v3 Test] All 3 assertion checks PASSED cleanly!');
 }
 
 runTests().catch(err => {
-  console.error('❌ [T4v2 Test] FAILED:', err);
+  console.error('❌ [T4v3 Test] FAILED:', err);
   process.exit(1);
 });

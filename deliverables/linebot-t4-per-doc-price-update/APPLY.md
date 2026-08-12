@@ -1,22 +1,25 @@
-# T4v2 — Per-Document Price Override Guide (#14 - REVISION 2)
+# T4v3 — Per-Document Price Override Guide (#14 - REVISION 3)
 
 **Target Repository**: `ai.enervia.co.th` / `pa-Oracle v2` (`ψ/active/qsolar/ai.enervia.co.th/`)  
 **Target Files**: `lib/doc-price-override.js` (ใหม่), `app.js`  
-**Grep Verified Line Numbers**: `app.js:3082-3096` (`case 'update_price'`), `app.js:3305` (คำสั่ง Admin LINE)  
+**Grep Verified Line Numbers**: `app.js:3453-3457` (วางเป็น Top-level Command ก่อนบล็อก `// View old BOM PDF by name`)  
 **Business Decision (พี่พงเคาะ A3)**: **ห้ามแก้ราคากลาง/ชีตผ่าน bot เด็ดขาด!** ให้อัปเดตราคา item ในเอกสารใบนั้นๆ เท่านั้น (per-document override ใน SQLite)  
 **Author**: Nasri Oracle — Right Hand of Ma'at 𓂀  
 **Date**: 2026-08-12  
 
 ---
 
-## 🎯 สรุปสิ่งที่ทำ (แก้ไขตาม Feedback pa Oracle)
+## 🎯 สรุปสิ่งที่ทำ (แก้ไขตาม Feedback pa Oracle REJECT T4v2)
 
-1. **พิงโค้ดระบบจริง `_qtCrud.updateQuotationPrices` (ไม่ใช้อ้างอิง `_pricePinning` เด็ดขาด)**:
-   - ปรับใช้โครงสร้าง `_qtCrud.updateQuotationPrices` และ `_qtCrud.editItem` จาก `lib/qt-crud-bridge.js`
-   - ปรับปรุงเฉพาะ `unit_cost` และ `total_cost` ของอุปกรณ์ในเอกสารฉบับนั้นใน `nasri.sqlite`
-2. **บันทึก Audit Log โปร่งใส (`doc_price_audit`)**:
+1. **ย้ายเป็น Top-level Command บริเวณเดียวกับ "ปิดงาน" (ก่อน `// View old BOM PDF by name`)**:
+   - แก้ไข Bug Placement เดิมที่วางหลัง `return;` ใน `case update_price` (ซึ่งเป็น Dead Code)
+   - วางเป็นคำสั่งอิสระระดับบนสุดก่อนบล็อกค้นหา BOM
+2. **โหลดข้อมูลและอัปเดตตรงผ่าน `_qtCrud` (`getQuotationDetail` / `editItem`)**:
+   - ไม่ reuse `_installerPdfBridge.resolveInstallerData` และไม่ใช้อ้างอิง `_pricePinning`
+   - โหลดรายละเอียดใบเสนอราคาและอัปเดต `unit_cost` / `total_cost` ของรายการใน `nasri.sqlite` โดยตรงผ่าน `_qtCrud.editItem`
+3. **บันทึก Audit Log โปร่งใส (`doc_price_audit`)**:
    - บันทึกประวัติการแก้ไขราคาทุกครั้งลงตาราง `doc_price_audit` (ใคร / ใบไหน / อุปกรณ์ใด / ราคาเดิม -> ราคาใหม่)
-3. **กติกาเหล็กตามสั่งพี่พง**:
+4. **กติกาเหล็กตามสั่งพี่พง**:
    - **ห้ามมี Code path ใดเขียนกลับไปยัง Google Sheets ราคากลางเด็ดขาด!**
 
 ---
@@ -34,7 +37,7 @@ cp deliverables/linebot-t4-per-doc-price-update/lib/doc-price-override.js "/mnt/
 ### Step 2: แทรกใน `app.js` (ประมาณบรรทัด 866)
 
 ```javascript
-// T4v2 (#14): Per-document price override engine (P'Phong decision A3: NEVER write back to Google Sheets)
+// T4v3 (#14): Per-document price override engine (P'Phong decision A3: NEVER write back to Google Sheets)
 var _docPriceOverride = require('./lib/doc-price-override')({
   sqlitePath: SQLITE_PATH
 });
@@ -42,69 +45,44 @@ var _docPriceOverride = require('./lib/doc-price-override')({
 
 ---
 
-### Step 3: แทรกคำสั่ง LINE `"แก้ราคา <item> <ราคา> ใน <id>"` ใน `app.js` (`app.js:3082-3096` Verified by Grep)
+### Step 3: แทรกคำสั่ง LINE `"แก้ราคา <item> <ราคา> ใน <id>"` ใน `app.js` (ก่อน `// View old BOM PDF by name` Verified by Grep `app.js:3453-3457`)
 
-#### BEFORE Context (`app.js:3082-3096` Verified by Grep):
+#### BEFORE Context (`app.js:3453-3457` Verified by Grep):
 ```javascript
-        case 'update_price': {
-          if (!_qtId) {
-            if (_convState) _convState.setState(k, { pending_action: 'await_qt_for_update_price' });
-            await rText(rt, 'จะอัพเดทราคาใบไหนครับ? ส่งเลข QT มาได้เลยครับ\n(หรือพิมพ์ QT ตรงๆ เช่น QT202604130001)');
-            return;
-          }
-          try {
-            var _priceDiff = await _qtCrud.updateQuotationPrices(_qtId, _dbPath);
-            if (!_priceDiff.changes || _priceDiff.changes.length === 0) {
-              await rText(rt, 'ไม่มีรายการที่อัพเดทราคาได้ครับ (ไม่พบใน catalog)\nใบเสนอ ' + _qtId);
-            } else {
-              await lReply(rt, [buildPriceUpdateDiffFlex(_priceDiff.changes, _priceDiff.old_total, _priceDiff.new_total)]);
-            }
-          } catch(e) { await rText(rt, '❌ อัพเดทราคาไม่ได้ครับ: ' + e.message.slice(0, 80)); }
-          return;
-        }
+  // View old BOM PDF by name
+  if ((lo.indexOf('ดู') >= 0) && (lo.indexOf('bom') >= 0 || lo.indexOf('pdf') >= 0)) {
+    var viewQuery = text.replace(/นัด|nasri|ไอ่นัด|ดู|view|bom|pdf/gi, '').trim();
+    if (viewQuery) {
+      var vwResults = searchBoms(viewQuery);
 ```
 
 #### AFTER Replacement:
 ```javascript
-        case 'update_price': {
-          if (!_qtId) {
-            if (_convState) _convState.setState(k, { pending_action: 'await_qt_for_update_price' });
-            await rText(rt, 'จะอัพเดทราคาใบไหนครับ? ส่งเลข QT มาได้เลยครับ\n(หรือพิมพ์ QT ตรงๆ เช่น QT202604130001)');
-            return;
-          }
-          try {
-            var _priceDiff = await _qtCrud.updateQuotationPrices(_qtId, _dbPath);
-            if (!_priceDiff.changes || _priceDiff.changes.length === 0) {
-              await rText(rt, 'ไม่มีรายการที่อัพเดทราคาได้ครับ (ไม่พบใน catalog)\nใบเสนอ ' + _qtId);
-            } else {
-              await lReply(rt, [buildPriceUpdateDiffFlex(_priceDiff.changes, _priceDiff.old_total, _priceDiff.new_total)]);
-            }
-          } catch(e) { await rText(rt, '❌ อัพเดทราคาไม่ได้ครับ: ' + e.message.slice(0, 80)); }
-          return;
-        }
+  // T4v3 (#14): Top-level Per-document price override command "แก้ราคา <item> <ราคาใหม่> ใน <QT id>"
+  var _docPriceM = lo.match(/^แก้ราคา\s+(.+)\s+(\d+(?:\.\d+)?)\s+ใน\s+(.+)$/i);
+  if (_docPriceM) {
+    if (!isAdminUser(_userId)) { await rText(rt, 'คำสั่งนี้ใช้ได้เฉพาะ admin ครับ'); return; }
+    var _itemName = _docPriceM[1].trim();
+    var _newPrice = parseFloat(_docPriceM[2]);
+    var _targetDocId = _docPriceM[3].trim();
 
-        // T4v2 (#14): Per-document single item price override command
-        var _docPriceM = lo.match(/^แก้ราคา\s+(.+)\s+(\d+(?:\.\d+)?)\s+ใน\s+(.+)$/i);
-        if (_docPriceM) {
-          if (!isAdminUser(_userId)) { await rText(rt, 'คำสั่งนี้ใช้ได้เฉพาะ admin ครับ'); return; }
-          var _itemName = _docPriceM[1].trim();
-          var _newPrice = parseFloat(_docPriceM[2]);
-          var _targetDocId = _docPriceM[3].trim();
+    _docPriceOverride.updateDocumentItemPrice(_targetDocId, _itemName, _newPrice, _userId, _qtCrud, SQLITE_PATH).then(function(_overrideRes) {
+      if (_overrideRes.ok) {
+        rText(rt, '✅ แก้ไขราคาสำเร็จ (' + _targetDocId + '):\n• ' + _overrideRes.item_name + ': ฿' + _overrideRes.old_price.toLocaleString() + ' ➔ ฿' + _newPrice.toLocaleString() + '\n• ยอดรวมใหม่: ฿' + _overrideRes.new_total.toLocaleString() + '\n\n*(ปรับปรุงเฉพาะเอกสารนี้ใน nasri.sqlite เรียบร้อย ไม่กระทบตารางราคากลาง)*');
+      } else {
+        rText(rt, '❌ ' + _overrideRes.error);
+      }
+    }).catch(function(e) {
+      rText(rt, '❌ เกิดข้อผิดพลาดในการอัปเดตราคา: ' + e.message);
+    });
+    return;
+  }
 
-          _installerPdfBridge.resolveInstallerData(_targetDocId, SQLITE_PATH, _qtCrud, _persistence).then(function(realData) {
-            if (!realData || !realData.items || realData.items.length === 0) {
-              rText(rt, '❌ ไม่พบเอกสาร ' + _targetDocId + ' ครับ');
-              return;
-            }
-            var _overrideRes = _docPriceOverride.updateDocumentItemPrice(_targetDocId, _itemName, _newPrice, _userId, realData.items);
-            if (_overrideRes.ok) {
-              rText(rt, '✅ แก้ไขราคาสำเร็จ (' + _targetDocId + '):\n• ' + _itemName + ': ฿' + _overrideRes.old_price.toLocaleString() + ' ➔ ฿' + _newPrice.toLocaleString() + '\n• ยอดรวมใหม่: ฿' + _overrideRes.new_total.toLocaleString() + '\n\n*(บันทึกเฉพาะเอกสารนี้ใน nasri.sqlite เรียบร้อย ไม่กระทบตารางราคากลาง)*');
-            } else {
-              rText(rt, '❌ ' + _overrideRes.error);
-            }
-          });
-          return;
-        }
+  // View old BOM PDF by name
+  if ((lo.indexOf('ดู') >= 0) && (lo.indexOf('bom') >= 0 || lo.indexOf('pdf') >= 0)) {
+    var viewQuery = text.replace(/นัด|nasri|ไอ่นัด|ดู|view|bom|pdf/gi, '').trim();
+    if (viewQuery) {
+      var vwResults = searchBoms(viewQuery);
 ```
 
 ---
