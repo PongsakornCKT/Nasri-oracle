@@ -1,5 +1,5 @@
 /**
- * test-t4.js — Verification Test Suite for T4 Per-Document Price Override (#14)
+ * test-t4.js — Verification Test Suite for T4v2 Per-Document Price Override (#14 - REVISION 2)
  * Runs standalone using Node.js / Bun. Exits 0 on clean pass, 1 on failure.
  */
 
@@ -28,7 +28,7 @@ class MockSqliteDb {
 const createDocPriceOverride = require('./lib/doc-price-override');
 
 async function runTests() {
-  console.log('🧪 [T4 Test] Starting test suite...');
+  console.log('🧪 [T4v2 Test] Starting test suite...');
 
   const mockDb = new MockSqliteDb();
   const overrideEngine = createDocPriceOverride({ db: mockDb });
@@ -60,10 +60,10 @@ async function runTests() {
   assert.strictEqual(errRes.ok, false, 'Non-existent item should return ok: false');
   assert.ok(errRes.error.includes('not found'), 'Error message should indicate item not found');
 
-  console.log('✅ [T4 Test] All 3 assertion checks PASSED cleanly!');
+  console.log('✅ [T4v2 Test] All 3 assertion checks PASSED cleanly!');
 }
 
 runTests().catch(err => {
-  console.error('❌ [T4 Test] FAILED:', err);
+  console.error('❌ [T4v2 Test] FAILED:', err);
   process.exit(1);
 });

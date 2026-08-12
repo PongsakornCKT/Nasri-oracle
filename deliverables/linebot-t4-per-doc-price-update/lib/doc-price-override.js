@@ -1,10 +1,11 @@
 'use strict';
 
 /**
- * doc-price-override.js — T4 Per-Document Price Override Engine (#14)
+ * doc-price-override.js — T4v2 Per-Document Price Override Engine (#14)
  * Updates item price in ONE specific QT/BOM document without writing back to Google Sheets.
- * Enforces P'Phong Business Decision A3: NO CODE PATH MAY EVER WRITE BACK TO GOOGLE SHEETS!
- * Records audit trail log in SQLite `doc_price_audit`.
+ * Uses _qtCrud.updateQuotationPrices / editItem and records audit trail in doc_price_audit.
+ *
+ * STRICT RULE: NEVER write back to Google Sheets! DO NOT reference _pricePinning.
  *
  * Author: Nasri Oracle — Right Hand of Ma'at 𓂀
  * Date: 2026-08-12
