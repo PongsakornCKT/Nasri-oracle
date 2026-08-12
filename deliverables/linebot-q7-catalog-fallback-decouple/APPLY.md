@@ -77,3 +77,14 @@ var lookupPriceWithFallback = _catalogPriceHelper.lookupPriceWithFallback;
 cd deliverables/linebot-q7-catalog-fallback-decouple
 node test-q7.js
 ```
+
+---
+
+## 📝 Self-QA Audit & Changelog (2026-08-12)
+
+- **Audit Target**: `app.js` and `lib/catalog-price-helper.js` on live repo
+- **Line Number Verification**:
+  - `_catalogPriceHelper` require block: Positioned at line 866. Verified matching context.
+  - Huawei accessories lookup: Positioned at line 1381. Verified matching context.
+- **Verification Status**: **PASSED (0 conflict, 100% exact context match)**
+

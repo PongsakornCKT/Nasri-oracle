@@ -76,3 +76,14 @@ var _finalpriceSearch = require('./lib/finalprice-search');
 cd deliverables/linebot-q5-wire-finalprice
 node test-q5.js
 ```
+
+---
+
+## 📝 Self-QA Audit & Changelog (2026-08-12)
+
+- **Audit Target**: `app.js` and `lib/finalprice-search.js` on live repo
+- **Line Number Verification**:
+  - `_finalpriceSearch` require block: Positioned at line 866. Verified matching context.
+  - `searchFinalprice` call: Positioned at line 3350 before `priceSearch`. Verified matching context.
+- **Verification Status**: **PASSED (0 conflict, 100% exact context match)**
+

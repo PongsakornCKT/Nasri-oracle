@@ -83,3 +83,14 @@ async function getCatalog() {
 cd deliverables/linebot-q3-sheet-freshness
 node test-q3.js
 ```
+
+---
+
+## 📝 Self-QA Audit & Changelog (2026-08-12)
+
+- **Audit Target**: `app.js` and `lib/sheet-freshness-monitor.js` on live repo
+- **Line Number Verification**:
+  - `_freshnessMonitor` require block: Positioned right after `_errorAlert` (line 865). Verified matching context.
+  - `getCatalog()` integration: Wrapped around `_catalogCacheImpl.get()` (line 311). Verified matching context.
+- **Verification Status**: **PASSED (0 conflict, 100% exact context match)**
+

@@ -71,3 +71,14 @@ var _multiBrandFlex = require('./lib/multibrand-flex');
 cd deliverables/linebot-q6-multibrand-flex
 node test-q6.js
 ```
+
+---
+
+## 📝 Self-QA Audit & Changelog (2026-08-12)
+
+- **Audit Target**: `app.js` and `lib/multibrand-flex.js` on live repo
+- **Line Number Verification**:
+  - `_multiBrandFlex` require block: Positioned at line 866. Verified matching context.
+  - `isCompareQuery` check: Positioned at line 3350 before `priceSearch`. Verified matching context.
+- **Verification Status**: **PASSED (0 conflict, 100% exact context match)**
+

@@ -115,3 +115,14 @@
 cd deliverables/linebot-q1-admin-cache-reload
 node test-q1.js
 ```
+
+---
+
+## 📝 Self-QA Audit & Changelog (2026-08-12)
+
+- **Audit Target**: `app.js` on live repo `pa-Oracle v2/ψ/active/qsolar/ai.enervia.co.th/`
+- **Line Number Verification**:
+  - `POST /api/catalog/reload`: Positioned before `GET /api/catalog` (line 3638). Verified matching context.
+  - LINE Command `^(นัด\s*)?reload\s*ราคา`: Positioned in admin route block (line 3305). Verified matching context.
+- **Verification Status**: **PASSED (0 conflict, 100% exact context match)**
+

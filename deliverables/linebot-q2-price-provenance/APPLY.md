@@ -79,3 +79,14 @@ function formatProvenanceText(ageMs) {
 cd deliverables/linebot-q2-price-provenance
 node test-q2.js
 ```
+
+---
+
+## 📝 Self-QA Audit & Changelog (2026-08-12)
+
+- **Audit Target**: `app.js` on live repo `pa-Oracle v2/ψ/active/qsolar/ai.enervia.co.th/`
+- **Line Number Verification**:
+  - `formatProvenanceText`: Positioned around line 380 after `extractField`. Verified matching context.
+  - `priceSearch` footnote: Positioned around line 3359. Verified matching context.
+- **Verification Status**: **PASSED (0 conflict, 100% exact context match)**
+

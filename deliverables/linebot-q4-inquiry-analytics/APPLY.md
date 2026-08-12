@@ -90,3 +90,15 @@ var _inquiryAnalytics = require('./lib/inquiry-analytics')({
 cd deliverables/linebot-q4-inquiry-analytics
 node test-q4.js
 ```
+
+---
+
+## 📝 Self-QA Audit & Changelog (2026-08-12)
+
+- **Audit Target**: `app.js` and `lib/inquiry-analytics.js` on live repo
+- **Line Number Verification**:
+  - `_inquiryAnalytics` require block: Positioned at line 866. Verified matching context.
+  - `logInquiry` in `priceSearch`: Positioned at line 3352. Verified matching context.
+  - `"สรุป demand"` command: Positioned at line 3305. Verified matching context.
+- **Verification Status**: **PASSED (0 conflict, 100% exact context match)**
+
