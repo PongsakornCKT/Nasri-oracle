@@ -2,7 +2,7 @@
 
 **Target Repository**: `ai.enervia.co.th` / `pa-Oracle v2` (`ψ/active/qsolar/ai.enervia.co.th/`)  
 **Target Files**: `lib/sync-outbox-client.js` (ใหม่), `app.js`  
-**Grep Verified Line Numbers**: `app.js:2234` (จุดสร้างใบเสนอราคาสำเร็จ), `app.js:3700` (จุด Cron endpoint sync-flush)  
+**Grep Verified Line Numbers**: `app.js:2234` (จุดสร้างใบเสนอราคาสำเร็จ)  
 **Author**: Nasri Oracle — Right Hand of Ma'at 𓂀  
 **Date**: 2026-08-12  
 
@@ -44,9 +44,24 @@ var _syncOutboxClient = require('./lib/sync-outbox-client')({
 
 ---
 
-### Step 3: เติมคิว Outbox หลังสร้างใบเสนอราคาสำเร็จ (`app.js:2234`)
+### Step 3: เติมคิว Outbox หลังสร้างใบเสนอราคาสำเร็จ (`app.js:2234` Verified by Grep)
 
+#### BEFORE Context (`app.js:2232-2236` Verified by Grep):
 ```javascript
+    // ── v2.0: Audit + History + Admin Notify ──
+    var userId = ev.source.userId || ev.source.groupId || '';
+    auditLog('quotation_generated', userId, result.quote_number + ' ' + result.brand + ' ' + result.size_kw + 'kW ฿' + result.grand_total);
+    saveQtHistory(userId, result, spec, pdfUrl);
+```
+
+#### AFTER Replacement:
+```javascript
+    // ── v2.0: Audit + History + Admin Notify ──
+    var userId = ev.source.userId || ev.source.groupId || '';
+    auditLog('quotation_generated', userId, result.quote_number + ' ' + result.brand + ' ' + result.size_kw + 'kW ฿' + result.grand_total);
+    saveQtHistory(userId, result, spec, pdfUrl);
+
+    // U2 (#Phase04): Enqueue quotation to sync outbox
     _syncOutboxClient.enqueueQuotation(result.quote_number, {
       quote_number: result.quote_number,
       sale_line_user_id: userId,

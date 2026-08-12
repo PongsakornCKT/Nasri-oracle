@@ -44,6 +44,14 @@ var _docPriceOverride = require('./lib/doc-price-override')({
 
 ### Step 3: แทรกคำสั่ง LINE `"แก้ราคา <item> <ราคา> ใน <id>"` ใน `app.js` (บรรทัด 3305 Verified by Grep)
 
+#### BEFORE Context (`app.js:3306-3309` Verified by Grep):
+```javascript
+  // View old BOM PDF by name
+  if ((lo.indexOf('ดู') >= 0) && (lo.indexOf('bom') >= 0 || lo.indexOf('pdf') >= 0)) {
+    var viewQuery = text.replace(/นัด|nasri|ไอ่นัด|ดู|view|bom|pdf/gi, '').trim();
+```
+
+#### AFTER Replacement:
 ```javascript
   // T4 (#14): Per-document price override command
   var _docPriceM = lo.match(/^แก้ราคา\s+(.+)\s+(\d+(?:\.\d+)?)\s+ใน\s+(.+)$/i);
@@ -68,6 +76,10 @@ var _docPriceOverride = require('./lib/doc-price-override')({
     });
     return;
   }
+
+  // View old BOM PDF by name
+  if ((lo.indexOf('ดู') >= 0) && (lo.indexOf('bom') >= 0 || lo.indexOf('pdf') >= 0)) {
+    var viewQuery = text.replace(/นัด|nasri|ไอ่นัด|ดู|view|bom|pdf/gi, '').trim();
 ```
 
 ---

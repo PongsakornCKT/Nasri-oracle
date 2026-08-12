@@ -4,7 +4,7 @@
 **Target Files**: `lib/sale-identity-payload.js` (ใหม่), `app.js`  
 **Grep Verified Line Numbers**: `app.js:2234` (จุดสร้างใบเสนอราคาสำเร็จ)  
 **Business Decision (พี่พงเคาะ B1)**: ใบเสนอราคาผูกกับ Sale ที่สั่ง (`sale_line_user_id = ev.source.userId`) — ฝั่ง Bot ไม่ Resolve User ID เอง (ให้ WordPress Dashboard Resolve ตาม Mapping)  
-**Author**: Nasri Oracle — Right Hand of Ma me 𓂀  
+**Author**: Nasri Oracle — Right Hand of Ma'at 𓂀  
 **Date**: 2026-08-12  
 
 ---
@@ -36,9 +36,24 @@ var _saleIdentityPayload = require('./lib/sale-identity-payload');
 
 ---
 
-### Step 3: เรียกใช้งานขณะ Enqueue Outbox (`app.js:2234`)
+### Step 3: เรียกใช้งานขณะ Enqueue Outbox (`app.js:2234` Verified by Grep)
 
+#### BEFORE Context (`app.js:2232-2236` Verified by Grep):
 ```javascript
+    // ── v2.0: Audit + History + Admin Notify ──
+    var userId = ev.source.userId || ev.source.groupId || '';
+    auditLog('quotation_generated', userId, result.quote_number + ' ' + result.brand + ' ' + result.size_kw + 'kW ฿' + result.grand_total);
+    saveQtHistory(userId, result, spec, pdfUrl);
+```
+
+#### AFTER Replacement:
+```javascript
+    // ── v2.0: Audit + History + Admin Notify ──
+    var userId = ev.source.userId || ev.source.groupId || '';
+    auditLog('quotation_generated', userId, result.quote_number + ' ' + result.brand + ' ' + result.size_kw + 'kW ฿' + result.grand_total);
+    saveQtHistory(userId, result, spec, pdfUrl);
+
+    // U3 (#B1): Build normalized payload with sale identity & enqueue to outbox
     var _syncPayload = _saleIdentityPayload.buildSyncPayload(spec, result, userId);
     _syncOutboxClient.enqueueQuotation(result.quote_number, _syncPayload);
 ```

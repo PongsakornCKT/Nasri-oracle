@@ -43,6 +43,14 @@ var _winLossTracker = require('./lib/winloss-tracker')({
 
 ### Step 3: แทรกคำสั่ง LINE ปิดงาน และ "close rate" ใน `app.js` (บรรทัด 3305 Verified by Grep)
 
+#### BEFORE Context (`app.js:3306-3309` Verified by Grep):
+```javascript
+  // View old BOM PDF by name
+  if ((lo.indexOf('ดู') >= 0) && (lo.indexOf('bom') >= 0 || lo.indexOf('pdf') >= 0)) {
+    var viewQuery = text.replace(/นัด|nasri|ไอ่นัด|ดู|view|bom|pdf/gi, '').trim();
+```
+
+#### AFTER Replacement:
 ```javascript
   // T6 (#B9): Win/Loss deal tracking command
   var _closeM = lo.match(/^ปิดงาน\s+(.+?)\s+(ได้งาน|ไม่ได้(?:\s+(.+))?)$/i);
@@ -84,6 +92,10 @@ var _winLossTracker = require('./lib/winloss-tracker')({
     await rText(rt, _crReply.trim());
     return;
   }
+
+  // View old BOM PDF by name
+  if ((lo.indexOf('ดู') >= 0) && (lo.indexOf('bom') >= 0 || lo.indexOf('pdf') >= 0)) {
+    var viewQuery = text.replace(/นัด|nasri|ไอ่นัด|ดู|view|bom|pdf/gi, '').trim();
 ```
 
 ---

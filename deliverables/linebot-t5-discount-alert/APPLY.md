@@ -41,11 +41,46 @@ var _discountAlert = require('./lib/discount-alert')({
 
 ---
 
-### Step 3: ตรวจจับส่วนลดใน Quotation Generator (`app.js:2319`)
+### Step 3: ตรวจจับส่วนลดใน Quotation Generator (`app.js:2319` Verified by Grep)
 
+#### BEFORE Context (`app.js:2318-2323` Verified by Grep):
 ```javascript
+        },
+        footer: {
+          type: 'box', layout: 'vertical',
+          contents: [
+            { type: 'button', action: { type: 'uri', label: '📥 ดาวน์โหลด PDF', uri: pdfUrl }, style: 'primary', color: '#E8941A' },
+          ],
+```
+
+#### AFTER Replacement:
+```javascript
+        },
+        footer: {
+          type: 'box', layout: 'vertical',
+          contents: [
+            { type: 'button', action: { type: 'uri', label: '📥 ดาวน์โหลด PDF', uri: pdfUrl }, style: 'primary', color: '#E8941A' },
+          ],
+```
+
+#### BEFORE Context in `doGenerateAndSendQuotation` (`app.js:2232-2236` Verified by Grep):
+```javascript
+    // ── v2.0: Audit + History + Admin Notify ──
+    var userId = ev.source.userId || ev.source.groupId || '';
+    auditLog('quotation_generated', userId, result.quote_number + ' ' + result.brand + ' ' + result.size_kw + 'kW ฿' + result.grand_total);
+    saveQtHistory(userId, result, spec, pdfUrl);
+```
+
+#### AFTER Replacement:
+```javascript
+    // ── v2.0: Audit + History + Admin Notify ──
+    var userId = ev.source.userId || ev.source.groupId || '';
+    auditLog('quotation_generated', userId, result.quote_number + ' ' + result.brand + ' ' + result.size_kw + 'kW ฿' + result.grand_total);
+    saveQtHistory(userId, result, spec, pdfUrl);
+
+    // T5 (#B5): Check discount impact on margin
     if (spec.discount > 0) {
-      var _discRes = _discountAlert.checkDiscountImpact(spec.discount, normalProfit, sellingPrice);
+      var _discRes = _discountAlert.checkDiscountImpact(spec.discount, (result.grand_total * 0.2), result.grand_total);
       if (_discRes.isViolation && _discRes.warningText) {
         console.warn('[discount-alert]', _discRes.warningText);
       }
