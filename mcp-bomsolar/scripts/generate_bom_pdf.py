@@ -6,52 +6,78 @@ Solar BOM PDF Generator
 """
 
 import os
+import re
 from datetime import datetime
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm, inch
 from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, 
+    SimpleDocTemplate, Table, TableStyle, Paragraph,
     Spacer, Image, PageBreak
 )
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.pdfgen import canvas
+
+# ==================== CATEGORY TRANSLATION MAP ====================
+
+CATEGORY_THAI_MAP = {
+    'general': 'ทั่วไป',
+    'cable': 'สายไฟและอุปกรณ์เดินสาย',
+    'mounting_rail': 'รางยึดโซลาร์',
+    'mounting_other': 'อุปกรณ์ยึดจับอื่นๆ',
+    'mounting_clamp': 'แคลมป์ยึดแผง',
+    'mounting_roof_anchor': 'ขายึดหลังคา',
+    'accessory': 'อุปกรณ์เสริม',
+    'isolator': 'อุปกรณ์ตัดต่อไฟ',
+    'module': 'โมดูล',
+    'inverter': 'อินเวอร์เตอร์',
+    'battery': 'แบตเตอรี่',
+    'structure': 'โครงสร้าง',
+}
 
 # ==================== FONT CONFIGURATION ====================
 
 def setup_thai_fonts():
     """ตั้งค่า font ที่รองรับภาษาไทย"""
-    # Project-local fonts directory (highest priority)
     _script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _fonts_dir = os.path.join(_script_dir, 'assets', 'fonts')
 
-    font_paths = [
-        # TH Sarabun New (project fonts — preferred)
-        (os.path.join(_fonts_dir, 'TH-Sarabun-New-Regular.ttf'), 'THSarabunNew'),
-        (os.path.join(_fonts_dir, 'TH-Sarabun-New-Bold.ttf'), 'THSarabunNew-Bold'),
-        # Garuda fallback
-        ('/usr/share/fonts/truetype/tlwg/Garuda.ttf', 'Garuda'),
-        ('/usr/share/fonts/truetype/tlwg/Garuda-Bold.ttf', 'Garuda-Bold'),
-        # Norasi fallback
-        ('/usr/share/fonts/truetype/tlwg/Norasi.ttf', 'Norasi'),
-        ('/usr/share/fonts/truetype/tlwg/Norasi-Bold.ttf', 'Norasi-Bold'),
-        # DejaVu Sans last resort
-        ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 'DejaVuSans'),
-        ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 'DejaVuSans-Bold'),
+    font_search_dirs = [
+        os.path.join(_script_dir, 'assets', 'fonts'),
+        os.path.join(_script_dir, 'assets', 'font'),
+        '/mnt/c/Users/pO-Ch/Nasri-oracle/tmppic/tempagent/quotation-solar/assets/font',
+        'C:/Users/pO-Ch/Nasri-oracle/tmppic/tempagent/quotation-solar/assets/font',
+        '/usr/share/fonts/truetype/tlwg',
+    ]
+
+    font_pairs = [
+        ('TH-Sarabun-New-Regular.ttf', 'TH-Sarabun-New-Bold.ttf', 'THSarabunNew', 'THSarabunNew-Bold'),
+        ('THSarabunNew.ttf', 'THSarabunNew-Bold.ttf', 'THSarabunNew', 'THSarabunNew-Bold'),
+        ('Garuda.ttf', 'Garuda-Bold.ttf', 'Garuda', 'Garuda-Bold'),
+        ('Norasi.ttf', 'Norasi-Bold.ttf', 'Norasi', 'Norasi-Bold'),
+        ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf', 'DejaVuSans', 'DejaVuSans-Bold'),
     ]
 
     registered_fonts = []
-    for path, name in font_paths:
-        if os.path.exists(path):
-            try:
-                pdfmetrics.registerFont(TTFont(name, path))
-                registered_fonts.append(name)
-            except Exception as e:
-                print(f"Warning: Could not register font {name}: {e}")
 
-    # เลือก font หลัก
+    for reg_filename, bold_filename, reg_name, bold_name in font_pairs:
+        if reg_name in registered_fonts:
+            continue
+        for d in font_search_dirs:
+            reg_path = os.path.join(d, reg_filename)
+            bold_path = os.path.join(d, bold_filename)
+            if os.path.exists(reg_path) and os.path.exists(bold_path):
+                try:
+                    pdfmetrics.registerFont(TTFont(reg_name, reg_path))
+                    pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+                    registered_fonts.append(reg_name)
+                    registered_fonts.append(bold_name)
+                    break
+                except Exception as e:
+                    print(f"Warning: Could not register font {reg_name}: {e}")
+
     if 'THSarabunNew' in registered_fonts:
         return 'THSarabunNew', 'THSarabunNew-Bold'
     elif 'Garuda' in registered_fonts:
@@ -79,22 +105,62 @@ COLORS = {
     'border': colors.HexColor('#cccccc'),
 }
 
+# ==================== NUMBERED CANVAS (PAGE X/Y & INTERNAL LABEL) ====================
+
+class NumberedCanvas(canvas.Canvas):
+    """Two-pass canvas to compute page numbers (หน้า X จาก Y), printed timestamp, and render internal document label."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_decorations(self, page_count):
+        self.saveState()
+        page_width, page_height = self._pagesize
+
+        # Footer Bottom-Left: Internal cost document warning
+        self.setFont(FONT_REGULAR, 8)
+        self.setFillColor(COLORS['gray'])
+        self.drawString(20*mm, 8*mm, "เอกสารภายใน — ต้นทุน ห้ามส่งลูกค้า")
+
+        # Footer Bottom-Center: Printed timestamp
+        printed_time = datetime.now().strftime("วันที่พิมพ์ %d/%m/%Y %H:%M")
+        self.drawCentredString(page_width / 2.0, 8*mm, printed_time)
+
+        # Footer Bottom-Right: Page number X/Y
+        page_str = f"หน้า {self._pageNumber} จาก {page_count}"
+        self.drawRightString(page_width - 20*mm, 8*mm, page_str)
+
+        self.restoreState()
+
 # ==================== STYLES ====================
 
 def get_styles():
     """สร้าง paragraph styles"""
     styles = getSampleStyleSheet()
-    
+
     # Title style
     styles.add(ParagraphStyle(
         name='ThaiTitle',
         fontName=FONT_BOLD,
         fontSize=24,
+        leading=26,
         textColor=COLORS['primary'],
         alignment=TA_CENTER,
-        spaceAfter=10,
+        spaceAfter=5,
     ))
-    
+
     # Subtitle style
     styles.add(ParagraphStyle(
         name='ThaiSubtitle',
@@ -104,7 +170,7 @@ def get_styles():
         alignment=TA_LEFT,
         spaceAfter=5,
     ))
-    
+
     # Normal Thai
     styles.add(ParagraphStyle(
         name='ThaiNormal',
@@ -113,7 +179,7 @@ def get_styles():
         textColor=COLORS['black'],
         alignment=TA_LEFT,
     ))
-    
+
     # Bold Thai
     styles.add(ParagraphStyle(
         name='ThaiBold',
@@ -122,7 +188,7 @@ def get_styles():
         textColor=COLORS['black'],
         alignment=TA_LEFT,
     ))
-    
+
     # Small Thai
     styles.add(ParagraphStyle(
         name='ThaiSmall',
@@ -131,7 +197,7 @@ def get_styles():
         textColor=COLORS['gray'],
         alignment=TA_LEFT,
     ))
-    
+
     # Table header
     styles.add(ParagraphStyle(
         name='TableHeader',
@@ -140,34 +206,37 @@ def get_styles():
         textColor=COLORS['white'],
         alignment=TA_CENTER,
     ))
-    
+
     # Table cell
     styles.add(ParagraphStyle(
         name='TableCell',
         fontName=FONT_REGULAR,
         fontSize=8,
+        leading=10,
         textColor=COLORS['black'],
         alignment=TA_LEFT,
     ))
-    
+
     # Table cell center
     styles.add(ParagraphStyle(
         name='TableCellCenter',
         fontName=FONT_REGULAR,
         fontSize=8,
+        leading=10,
         textColor=COLORS['black'],
         alignment=TA_CENTER,
     ))
-    
+
     # Table cell right
     styles.add(ParagraphStyle(
         name='TableCellRight',
         fontName=FONT_REGULAR,
         fontSize=8,
+        leading=10,
         textColor=COLORS['black'],
         alignment=TA_RIGHT,
     ))
-    
+
     return styles
 
 # ==================== HELPER FUNCTIONS ====================
@@ -206,39 +275,15 @@ def truncate_text(text, max_length=50):
 def generate_bom_pdf(bom_data, output_path, logo_path=None):
     """
     สร้าง PDF รายการวัสดุ (BOM)
-    
-    Args:
-        bom_data: dict containing:
-            - company_name: ชื่อบริษัท
-            - project_name: ชื่อโครงการ
-            - project_address: ที่อยู่โครงการ
-            - order_date: วันที่สั่งซื้อ
-            - notes: บันทึก (optional)
-            - items: list of dicts with:
-                - part_number: รหัสสินค้า
-                - part_name: ชื่อสินค้า
-                - manufacturer: ผู้ผลิต
-                - category: หมวดหมู่
-                - quantity: จำนวน
-                - unit_cost: ราคาต่อหน่วย
-                - total_cost: ราคารวม
-                - notes: หมายเหตุ (optional)
-        output_path: path to save PDF
-        logo_path: path to logo image (optional)
-    
-    Returns:
-        str: path to generated PDF
     """
-    
+
     # ตรวจสอบ logo path
     if logo_path is None:
-        # ค้นหา logo ใน skill directory
         skill_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         default_logo = os.path.join(skill_dir, 'assets', 'logo', 'enervia.jpg')
         if os.path.exists(default_logo):
             logo_path = default_logo
-    
-    # สร้าง document
+
     doc = SimpleDocTemplate(
         output_path,
         pagesize=landscape(A4),
@@ -247,16 +292,12 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
         topMargin=15*mm,
         bottomMargin=15*mm,
     )
-    
+
     styles = get_styles()
     story = []
-    
+
     # ==================== HEADER SECTION ====================
-    
-    # Logo และ Title
-    header_data = []
-    
-    # Logo (ถ้ามี)
+
     if logo_path and os.path.exists(logo_path):
         try:
             logo = Image(logo_path, width=50*mm, height=15*mm)
@@ -265,11 +306,9 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
             logo = Paragraph('', styles['ThaiNormal'])
     else:
         logo = Paragraph('', styles['ThaiNormal'])
-    
-    # Title
+
     title = Paragraph('รายการวัสดุ ENERVIA GROUP', styles['ThaiTitle'])
-    
-    # Header table (Logo + Title)
+
     header_table = Table(
         [[logo, title]],
         colWidths=[60*mm, 190*mm]
@@ -280,17 +319,31 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
     story.append(header_table)
-    story.append(Spacer(1, 10*mm))
-    
+    story.append(Spacer(1, 4*mm))
+
+    # Brand Accent Bar Line
+    accent_bar = Table([['']], colWidths=[250*mm], rowHeights=[2.5*mm])
+    accent_bar.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), COLORS['primary']),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    story.append(accent_bar)
+    story.append(Spacer(1, 6*mm))
+
     # ==================== PROJECT INFO SECTION ====================
-    
+
     company_name = bom_data.get('company_name', 'Enervia Group co.,ltd')
     project_name = bom_data.get('project_name', '')
     project_address = bom_data.get('project_address', '')
-    order_date = bom_data.get('order_date', datetime.now().strftime('%d/%m/%y'))
-    notes = bom_data.get('notes', '')
-    
-    # Info table
+
+    order_date = str(bom_data.get('order_date', '')).strip()
+    if not order_date or order_date in ['17/4/26', '17/04/26', '17/4/2026', '17/04/2026']:
+        order_date = datetime.now().strftime('%d/%m/%y')
+
+    notes = str(bom_data.get('notes', '')).strip()
+    notes_display = notes if notes else '-'
+
     info_data = [
         [
             Paragraph(f"<b>ชื่อบริษัท</b>", styles['ThaiNormal']),
@@ -302,7 +355,7 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
             Paragraph(f"<b>ที่อยู่โครงการ</b>", styles['ThaiNormal']),
             Paragraph(f"{project_name}, {project_address}" if project_address else project_name, styles['ThaiNormal']),
             Paragraph(f"<b>บันทึก</b>", styles['ThaiNormal']),
-            Paragraph(notes, styles['ThaiNormal']),
+            Paragraph(notes_display, styles['ThaiNormal']),
         ],
         [
             Paragraph(f"<b>วันที่คำสั่งซื้อ</b>", styles['ThaiNormal']),
@@ -311,7 +364,7 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
             Paragraph('', styles['ThaiNormal']),
         ],
     ]
-    
+
     info_table = Table(
         info_data,
         colWidths=[35*mm, 90*mm, 25*mm, 100*mm]
@@ -324,10 +377,12 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
     ]))
     story.append(info_table)
     story.append(Spacer(1, 8*mm))
-    
+
     # ==================== BOM TABLE ====================
-    
-    # Table headers
+
+    items = bom_data.get('items', [])
+    has_item_notes = any(str(item.get('notes', '')).strip() for item in items)
+
     headers = [
         Paragraph('แถว', styles['TableHeader']),
         Paragraph('หมายเลขอะไหล่', styles['TableHeader']),
@@ -337,37 +392,46 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
         Paragraph('ปริมาณ', styles['TableHeader']),
         Paragraph('ต้นทุน/<br/>หน่วย', styles['TableHeader']),
         Paragraph('ต้นทุน<br/>ทั้งหมด', styles['TableHeader']),
-        Paragraph('Notes', styles['TableHeader']),
     ]
-    
-    # Table data
+    if has_item_notes:
+        headers.append(Paragraph('หมายเหตุ', styles['TableHeader']))
+
     table_data = [headers]
     total_qty = 0
     total_cost = 0
-    
-    items = bom_data.get('items', [])
+
     for idx, item in enumerate(items, 1):
         qty = item.get('quantity', 0)
         unit_cost = item.get('unit_cost', 0)
         item_total = item.get('total_cost', qty * unit_cost if qty and unit_cost else 0)
-        
+
         total_qty += qty if qty else 0
         total_cost += item_total if item_total else 0
-        
+
+        cat_raw = str(item.get('category', '')).strip()
+        cat_display = CATEGORY_THAI_MAP.get(cat_raw.lower(), cat_raw)
+
+        # Wrap long item details cleanly onto new lines without truncation
+        part_number = str(item.get('part_number', ''))
+        part_name = str(item.get('part_name', ''))
+        manufacturer = str(item.get('manufacturer', ''))
+        item_notes = str(item.get('notes', ''))
+
         row = [
             Paragraph(str(idx), styles['TableCellCenter']),
-            Paragraph(truncate_text(item.get('part_number', ''), 30), styles['TableCell']),
-            Paragraph(truncate_text(item.get('part_name', ''), 40), styles['TableCell']),
-            Paragraph(truncate_text(item.get('manufacturer', ''), 20), styles['TableCell']),
-            Paragraph(item.get('category', ''), styles['TableCellCenter']),
+            Paragraph(part_number, styles['TableCell']),
+            Paragraph(part_name, styles['TableCell']),
+            Paragraph(manufacturer, styles['TableCell']),
+            Paragraph(cat_display, styles['TableCellCenter']),
             Paragraph(format_number(qty), styles['TableCellCenter']),
             Paragraph(format_currency(unit_cost), styles['TableCellRight']),
             Paragraph(format_currency(item_total), styles['TableCellRight']),
-            Paragraph(truncate_text(item.get('notes', ''), 25), styles['TableCell']),
         ]
+        if has_item_notes:
+            row.append(Paragraph(item_notes, styles['TableCell']))
+
         table_data.append(row)
-    
-    # Total row
+
     total_row = [
         Paragraph('', styles['TableCell']),
         Paragraph('', styles['TableCell']),
@@ -377,51 +441,47 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
         Paragraph(f"<b>{format_number(total_qty)}</b>", styles['TableCellCenter']),
         Paragraph('', styles['TableCell']),
         Paragraph(f"<b>{format_currency(total_cost)}</b>", styles['TableCellRight']),
-        Paragraph('', styles['TableCell']),
     ]
+    if has_item_notes:
+        total_row.append(Paragraph('', styles['TableCell']))
+
     table_data.append(total_row)
-    
-    # Column widths (adjusted for A4 landscape)
-    col_widths = [12*mm, 40*mm, 50*mm, 30*mm, 35*mm, 20*mm, 25*mm, 28*mm, 30*mm]
-    
-    # Create table
+
+    if has_item_notes:
+        col_widths = [10*mm, 35*mm, 55*mm, 28*mm, 32*mm, 16*mm, 25*mm, 28*mm, 28*mm]
+    else:
+        col_widths = [10*mm, 42*mm, 76*mm, 28*mm, 34*mm, 16*mm, 25*mm, 26*mm]
+
     bom_table = Table(table_data, colWidths=col_widths, repeatRows=1)
-    
-    # Table styles
+
     table_style = [
-        # Header style
         ('BACKGROUND', (0, 0), (-1, 0), COLORS['primary']),
         ('TEXTCOLOR', (0, 0), (-1, 0), COLORS['white']),
         ('FONTNAME', (0, 0), (-1, 0), FONT_BOLD),
         ('FONTSIZE', (0, 0), (-1, 0), 9),
         ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        
-        # Data rows
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+
         ('FONTNAME', (0, 1), (-1, -1), FONT_REGULAR),
         ('FONTSIZE', (0, 1), (-1, -1), 8),
-        
-        # Grid
+
         ('GRID', (0, 0), (-1, -1), 0.5, COLORS['border']),
         ('LINEBELOW', (0, 0), (-1, 0), 1.5, COLORS['primary']),
-        
-        # Total row
+
         ('BACKGROUND', (0, -1), (-1, -1), COLORS['light_bg']),
         ('FONTNAME', (0, -1), (-1, -1), FONT_BOLD),
         ('LINEABOVE', (0, -1), (-1, -1), 1.5, COLORS['primary']),
-        
-        # Padding
+
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ('LEFTPADDING', (0, 0), (-1, -1), 3),
         ('RIGHTPADDING', (0, 0), (-1, -1), 3),
     ]
-    
-    # Alternate row colors
+
     for i in range(1, len(table_data) - 1):
         if i % 2 == 0:
             table_style.append(('BACKGROUND', (0, i), (-1, i), COLORS['light_bg']))
-    
+
     bom_table.setStyle(TableStyle(table_style))
     story.append(bom_table)
 
@@ -431,16 +491,50 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
     if cost_summary:
         story.append(Spacer(1, 10*mm))
 
-        # Cost Summary title
-        cost_title = Paragraph('<b>Cost Summary</b>', ParagraphStyle(
+        # Thai Title for Cost Summary
+        cost_title = Paragraph('<b>สรุปต้นทุน</b>', ParagraphStyle(
             'CostTitle', parent=styles['ThaiTitle'], fontSize=16, alignment=TA_LEFT,
         ))
         story.append(cost_title)
         story.append(Spacer(1, 3*mm))
 
-        # Build cost summary rows
         actual_wp = cost_summary.get('actual_wp', 0)
+        if not actual_wp:
+            for item in items:
+                cat = str(item.get('category', '')).lower()
+                if cat in ['โมดูล', 'panel', 'module']:
+                    qty = item.get('quantity', 0)
+                    pname = str(item.get('part_name', '')) + ' ' + str(item.get('part_number', ''))
+                    w_match = re.search(r'(\d+)\s*w', pname, re.IGNORECASE)
+                    if w_match:
+                        watts = float(w_match.group(1))
+                        actual_wp += qty * watts
+            if not actual_wp:
+                proj = bom_data.get('project_name', '')
+                kw_match = re.search(r'(\d+(?:\.\d+)?)\s*kw', proj, re.IGNORECASE)
+                if kw_match:
+                    actual_wp = float(kw_match.group(1)) * 1000
+
         actual_kw_str = f"{actual_wp/1000:.2f}kW" if actual_wp else ""
+
+        labor_val = cost_summary.get('labor', 0)
+        labor_rate = cost_summary.get('labor_rate_per_wp', 0)
+        if not labor_rate and actual_wp and labor_val:
+            labor_rate = labor_val / actual_wp
+
+        bos_val = cost_summary.get('bos', 0)
+        bos_rate = cost_summary.get('bos_rate_per_wp', 0)
+        if not bos_rate and actual_wp and bos_val:
+            bos_rate = bos_val / actual_wp
+
+        error_val = cost_summary.get('error_cost', 0)
+        error_rate = cost_summary.get('error_rate_per_wp', 0)
+        if not error_rate and actual_wp and error_val:
+            error_rate = error_val / actual_wp
+
+        labor_rate_str = f"{labor_rate:g}" if labor_rate else "0"
+        bos_rate_str = f"{bos_rate:g}" if bos_rate else "0"
+        error_rate_str = f"{error_rate:g}" if error_rate else "0"
 
         cost_rows = [
             [
@@ -452,24 +546,23 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
                 Paragraph(format_currency(cost_summary.get('equipment_total', total_cost)), ParagraphStyle('CSRight', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
             ],
             [
-                Paragraph(f"VAT 7% (จากค่าอุปกรณ์)", styles['ThaiNormal']),
+                Paragraph('VAT 7% (จากค่าอุปกรณ์)', styles['ThaiNormal']),
                 Paragraph(format_currency(cost_summary.get('vat_7pct', 0)), ParagraphStyle('CSRight2', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
             ],
             [
-                Paragraph(f"ค่าแรง ({actual_kw_str} × ฿4.5/Wp)" if actual_kw_str else "ค่าแรง", styles['ThaiNormal']),
-                Paragraph(format_currency(cost_summary.get('labor', 0)), ParagraphStyle('CSRight3', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+                Paragraph(f"ค่าแรง ({actual_kw_str} × ฿{labor_rate_str}/Wp)" if actual_kw_str else "ค่าแรง", styles['ThaiNormal']),
+                Paragraph(format_currency(labor_val), ParagraphStyle('CSRight3', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
             ],
             [
-                Paragraph(f"BOS ({actual_kw_str} × ฿0.7/Wp)" if actual_kw_str else "BOS", styles['ThaiNormal']),
-                Paragraph(format_currency(cost_summary.get('bos', 0)), ParagraphStyle('CSRight4', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+                Paragraph(f"BOS ({actual_kw_str} × ฿{bos_rate_str}/Wp)" if actual_kw_str else "BOS", styles['ThaiNormal']),
+                Paragraph(format_currency(bos_val), ParagraphStyle('CSRight4', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
             ],
             [
-                Paragraph(f"Error Cost ({actual_kw_str} × ฿1.0/Wp)" if actual_kw_str else "Error Cost", styles['ThaiNormal']),
-                Paragraph(format_currency(cost_summary.get('error_cost', 0)), ParagraphStyle('CSRight5', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
+                Paragraph(f"เผื่อเหลือเผื่อขาด ({actual_kw_str} × ฿{error_rate_str}/Wp)" if actual_kw_str else "เผื่อเหลือเผื่อขาด", styles['ThaiNormal']),
+                Paragraph(format_currency(error_val), ParagraphStyle('CSRight5', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
             ],
         ]
 
-        # Crane (only if > 0)
         crane = cost_summary.get('crane', 0)
         if crane > 0:
             cost_rows.append([
@@ -482,24 +575,20 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
             Paragraph(format_currency(cost_summary.get('pea_mea_fee', 0)), ParagraphStyle('CSRight7', fontName=FONT_REGULAR, fontSize=10, textColor=COLORS['black'], alignment=TA_RIGHT)),
         ])
 
-        # Grand Total row
+        # Grand Total row (Thai)
         cost_rows.append([
-            Paragraph('<b>Grand Total</b>', ParagraphStyle('CSGrand', fontName=FONT_BOLD, fontSize=12, textColor=COLORS['primary'], alignment=TA_LEFT)),
+            Paragraph('<b>รวมทั้งสิ้น</b>', ParagraphStyle('CSGrand', fontName=FONT_BOLD, fontSize=12, textColor=COLORS['primary'], alignment=TA_LEFT)),
             Paragraph(f"<b>{format_currency(cost_summary.get('grand_total', 0))}</b>", ParagraphStyle('CSGrandR', fontName=FONT_BOLD, fontSize=12, textColor=COLORS['primary'], alignment=TA_RIGHT)),
         ])
 
         cost_table = Table(cost_rows, colWidths=[160*mm, 60*mm])
 
         cs_style = [
-            # Header
             ('BACKGROUND', (0, 0), (-1, 0), COLORS['primary']),
             ('TEXTCOLOR', (0, 0), (-1, 0), COLORS['white']),
-            # Grid
             ('GRID', (0, 0), (-1, -1), 0.5, COLORS['border']),
-            # Grand total row
             ('LINEABOVE', (0, -1), (-1, -1), 1.5, COLORS['primary']),
             ('BACKGROUND', (0, -1), (-1, -1), COLORS['light_bg']),
-            # Padding
             ('TOPPADDING', (0, 0), (-1, -1), 5),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
             ('LEFTPADDING', (0, 0), (-1, -1), 6),
@@ -507,7 +596,6 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]
 
-        # Alternate row colors for data rows
         for i in range(1, len(cost_rows) - 1):
             if i % 2 == 0:
                 cs_style.append(('BACKGROUND', (0, i), (-1, i), COLORS['light_bg']))
@@ -515,10 +603,11 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
         cost_table.setStyle(TableStyle(cs_style))
         story.append(cost_table)
 
-    # Build PDF
-    doc.build(story)
+    # Build PDF with two-pass NumberedCanvas for page X/Y and internal doc label
+    doc.build(story, canvasmaker=NumberedCanvas)
 
     return output_path
+
 
 
 # ==================== MAIN / EXAMPLE ====================
@@ -614,8 +703,8 @@ if __name__ == '__main__':
             },
         ]
     }
-    
+
     # สร้าง PDF
-    output_file = '/home/claude/BOM_example.pdf'
+    output_file = '/tmp/bom-improved.pdf'
     result = generate_bom_pdf(example_bom, output_file)
     print(f"PDF created: {result}")
