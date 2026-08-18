@@ -1,0 +1,38 @@
+{
+  "mcpServers": {
+    "oracle-nasri": {
+      "type": "stdio",
+      "command": "C:\\Users\\pO-Ch\\.bun\\bin\\bun.exe",
+      "args": [
+        "C:\\Users\\pO-Ch\\Documents\\GitHub\\arra-oracle-v3\\src\\index.ts"
+      ],
+      "env": {
+        "ORACLE_DATA_DIR": "C:\\Users\\pO-Ch\\.oracle-nasri",
+        "ORACLE_DB_PATH": "C:\\Users\\pO-Ch\\.oracle-nasri\\oracle.db",
+        "ORACLE_VECTOR_DB": "sqlite-vec",
+        "ORACLE_VECTOR_DB_PATH": "C:\\Users\\pO-Ch\\.oracle-nasri\\vectors.db",
+        "ORACLE_EMBEDDING_PROVIDER": "ollama",
+        "ORACLE_EMBEDDING_MODEL": "bge-m3",
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "OLLAMA_MODEL": "bge-m3",
+        "OLLAMA_URL": "http://localhost:11434"
+      }
+    },
+    "oracle": {
+      "type": "stdio",
+      "command": "C:\\Users\\pO-Ch\\.bun\\bin\\bun.exe",
+      "args": [
+        "C:\\Users\\pO-Ch\\Documents\\GitHub\\arra-oracle-v3\\src\\index.ts"
+      ],
+      "env": {
+        "ORACLE_DATA_DIR": "C:\\Users\\pO-Ch\\.oracle",
+        "ORACLE_DB_PATH": "C:\\Users\\pO-Ch\\.oracle\\oracle.db",
+        "ORACLE_VECTOR_DB": "sqlite-vec",
+        "ORACLE_VECTOR_DB_PATH": "C:\\Users\\pO-Ch\\.oracle\\vectors.db",
+        "ORACLE_EMBEDDING_PROVIDER": "ollama",
+        "ORACLE_EMBEDDING_MODEL": "bge-m3",
+        "OLLAMA_BASE_URL": "http://localhost:11434"
+      }
+    }
+  }
+}

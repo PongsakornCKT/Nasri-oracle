@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Worktree Drift & Uncommitted Changes Widget</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Thai+Looped:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #04040a;
+      --card-bg: #0a0a14;
+      --border: rgba(255, 255, 255, 0.1);
+      --border-hover: rgba(255, 255, 255, 0.22);
+      --gold: #f59e0b;
+      --green: #22c55e;
+      --green-glow: 0 0 6px rgba(34, 197, 94, 0.6);
+      --amber: #f59e0b;
+      --amber-glow: 0 0 6px rgba(245, 158, 11, 0.6);
+      --red: #ef4444;
+      --red-glow: 0 0 6px rgba(239, 68, 68, 0.6);
+      --text: #f3f4f6;
+      --text-dim: #9ca3af;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Sans Thai Looped', system-ui, -apple-system, sans-serif;
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .widget-card {
+      width: 100%;
+      max-width: 640px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--gold);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .summary-group {
+      display: flex;
+      gap: 6px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .summary-pill {
+      padding: 2px 8px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+    }
+
+    .summary-pill.clean { background: rgba(34, 197, 94, 0.12); color: var(--green); border-color: rgba(34, 197, 94, 0.3); }
+    .summary-pill.drift { background: rgba(245, 158, 11, 0.12); color: var(--amber); border-color: rgba(245, 158, 11, 0.3); }
+
+    .btn-refresh {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-refresh:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+
+    .wt-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+      max-height: 480px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .wt-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .wt-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--border-hover);
+    }
+
+    .wt-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    /* ── CRITICAL: Genuine CSS Circle Dot ── */
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.green { background: var(--green); box-shadow: var(--green-glow); }
+    .status-dot.amber { background: var(--amber); box-shadow: var(--amber-glow); }
+    .status-dot.red { background: var(--red); box-shadow: var(--red-glow); }
+
+    .wt-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .wt-repo {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .wt-branch {
+      font-size: 10px;
+      font-family: 'IBM Plex Mono', monospace;
+      color: var(--text-dim);
+      truncate: true;
+    }
+
+    .wt-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .count-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .count-badge.green { background: rgba(34, 197, 94, 0.12); color: var(--green); }
+    .count-badge.amber { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+    .count-badge.red { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+
+    .age-text {
+      font-size: 9px;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    .card-footer {
+      margin-top: 12px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: 'IBM Plex Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="widget-card">
+    <div class="card-header">
+      <div class="card-title">
+        <span>🍂 Worktree Drift</span>
+        <div class="summary-group">
+          <span class="summary-pill clean" id="pillClean">0 Clean</span>
+          <span class="summary-pill drift" id="pillDrift">0 Drifted</span>
+        </div>
+      </div>
+      <button class="btn-refresh" onclick="manualRefresh()">
+        <span id="spinIcon">↻</span> Refresh
+      </button>
+    </div>
+
+    <!-- Worktrees List -->
+    <div class="wt-list" id="wtList">
+      <!-- Dynamic Rows -->
+    </div>
+
+    <!-- Footer -->
+    <div class="card-footer">
+      <span>Auto-polling every 60s • Cache TTL 60s</span>
+      <span id="lastUpdated">Checking...</span>
+    </div>
+  </div>
+
+  <script>
+    // Fallback Mock Data for local file preview (file://)
+    const MOCK_DATA = {
+      worktrees: [
+        { repo: "pa-Oracle v2", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/pa-Oracle v2", branch: "feat/governance-capture-hook", uncommittedCount: 205, lastCommitAt: new Date().toISOString(), ageDays: 0.2 },
+        { repo: "enervia-survey", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/enervia-survey", branch: "fix/contract-header-number-wrap", uncommittedCount: 1, lastCommitAt: new Date().toISOString(), ageDays: 10.7 },
+        { repo: "nasri-oracle", path: "/mnt/c/Users/pO-Ch/Documents/GitHub/nasri-oracle", branch: "master", uncommittedCount: 0, lastCommitAt: new Date().toISOString(), ageDays: 0 }
+      ],
+      totalWorktrees: 3,
+      cleanCount: 1,
+      driftCount: 2,
+      totalUncommittedFiles: 206,
+      checkedAt: new Date().toISOString()
+    };
+
+    function formatAgeDaysThai(ageDays) {
+      if (ageDays === null || ageDays === undefined) return 'ไม่ทราบเวลา';
+      if (ageDays < 0.1) return 'วันนี้';
+      if (ageDays < 1) return `${Math.round(ageDays * 24)} ชั่วโมงที่แล้ว`;
+      return `${Math.round(ageDays * 10) / 10} วันที่แล้ว`;
+    }
+
+    let currentData = MOCK_DATA;
+
+    function render() {
+      if (!currentData || !currentData.worktrees) return;
+
+      document.getElementById('pillClean').textContent = `${currentData.cleanCount || 0} Clean`;
+      document.getElementById('pillDrift').textContent = `${currentData.driftCount || 0} Drifted (${currentData.totalUncommittedFiles || 0} files)`;
+
+      const listEl = document.getElementById('wtList');
+      listEl.innerHTML = '';
+
+      currentData.worktrees.forEach(w => {
+        const row = document.createElement('div');
+        row.className = 'wt-row';
+
+        const count = w.uncommittedCount || 0;
+        let colorClass = 'green';
+        let countText = '0 uncommitted (Clean)';
+
+        if (count > 10) {
+          colorClass = 'red';
+          countText = `${count} uncommitted files`;
+        } else if (count > 0) {
+          colorClass = 'amber';
+          countText = `${count} uncommitted file${count > 1 ? 's' : ''}`;
+        }
+
+        const dotClass = `status-dot ${colorClass}`;
+        const badgeClass = `count-badge ${colorClass}`;
+        const ageText = formatAgeDaysThai(w.ageDays);
+
+        row.innerHTML = `
+          <div class="wt-left">
+            <div class="${dotClass}"></div>
+            <div class="wt-info">
+              <div class="wt-repo">${w.repo}</div>
+              <div class="wt-branch">🌿 ${w.branch}</div>
+            </div>
+          </div>
+          <div class="wt-right">
+            <span class="${badgeClass}">${countText}</span>
+            <span class="age-text">${ageText}</span>
+          </div>
+        `;
+        listEl.appendChild(row);
+      });
+
+      const updated = currentData.checkedAt ? new Date(currentData.checkedAt).toTimeString().split(' ')[0] : '--:--:--';
+      document.getElementById('lastUpdated').textContent = `Updated ${updated}`;
+    }
+
+    async function fetchDriftData(forceRefresh = false) {
+      try {
+        const url = `/api/worktrees/drift${forceRefresh ? '?refresh=1' : ''}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        currentData = await res.json();
+      } catch (err) {
+        currentData = MOCK_DATA;
+        currentData.checkedAt = new Date().toISOString();
+      } finally {
+        render();
+      }
+    }
+
+    async function manualRefresh() {
+      const icon = document.getElementById('spinIcon');
+      icon.style.transform = 'rotate(360deg)';
+      icon.style.transition = 'transform 0.5s ease';
+      await fetchDriftData(true);
+      setTimeout(() => { icon.style.transform = 'none'; icon.style.transition = 'none'; }, 500);
+    }
+
+    fetchDriftData();
+    setInterval(fetchDriftData, 60000);
+  </script>
+</body>
+</html>

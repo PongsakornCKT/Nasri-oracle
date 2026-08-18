@@ -1,0 +1,272 @@
+<!-- ================================================================= -->
+<!-- Tracker Phase 3: Batch Execute Multi-Select Toolbar (Final)       -->
+<!-- Deliverable Block for oracle-studio/tracker.html                  -->
+<!-- ================================================================= -->
+
+<style>
+  /* ── Proposal Card Checkbox Overlay ── */
+  .proposal-card {
+    position: relative;
+  }
+  .batch-proposal-checkbox {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 17px;
+    height: 17px;
+    accent-color: var(--gold, #c9a84c);
+    cursor: pointer;
+    z-index: 10;
+    opacity: 0.85;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .batch-proposal-checkbox:hover, .batch-proposal-checkbox:checked {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+
+  /* ── Floating Sticky Action Bar ── */
+  .batch-floating-bar {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    z-index: 9999;
+    background: var(--bg2, #141414);
+    border: 1px solid var(--gold, #c9a84c);
+    border-radius: 30px;
+    padding: 8px 22px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.85), 0 0 25px var(--gold-glow, rgba(201, 168, 76, 0.25));
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.2s ease;
+  }
+
+  .batch-floating-bar.active {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .batch-bar-count {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--gold, #c9a84c);
+    font-family: 'IBM Plex Mono', monospace;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .batch-bar-btn-execute {
+    background: linear-gradient(135deg, #c9a84c 0%, #4caf7d 100%);
+    color: #000;
+    font-weight: 700;
+    border: none;
+    border-radius: 20px;
+    padding: 6px 18px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 10px rgba(76, 175, 125, 0.4);
+  }
+
+  .batch-bar-btn-execute:hover {
+    transform: scale(1.04);
+    box-shadow: 0 4px 16px rgba(76, 175, 125, 0.6);
+  }
+
+  .batch-bar-btn-execute:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .batch-bar-btn-clear {
+    background: transparent;
+    border: 1px solid var(--border, rgba(201, 168, 76, 0.2));
+    color: var(--text-dim, #888);
+    border-radius: 14px;
+    padding: 4px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .batch-bar-btn-clear:hover {
+    color: var(--text, #e8e0d0);
+    border-color: var(--text, #e8e0d0);
+  }
+</style>
+
+<!-- Floating Sticky Action Bar -->
+<div id="batchFloatingBar" class="batch-floating-bar">
+  <div class="batch-bar-count">
+    <span>☑</span>
+    <span id="batchSelectedCountText">0 รายการ</span>
+  </div>
+  <button id="batchExecuteBtn" class="batch-bar-btn-execute" onclick="runBatchExecutionLoop()">
+    ⚡ Execute Selected
+  </button>
+  <button id="batchClearBtn" class="batch-bar-btn-clear" onclick="clearBatchSelections()">
+    ยกเลิก
+  </button>
+</div>
+
+<script>
+(function() {
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  let selectedTasksMap = new Map(); // id -> taskText
+
+  // Standalone Mock Fallback (injected into #proposalsGrid if empty)
+  function renderMockProposalsIfEmpty() {
+    const grid = document.getElementById('proposalsGrid');
+    if (!grid) return;
+    if (grid.children.length === 0) {
+      grid.innerHTML = `
+        <div class="proposal-card p-pending" style="padding:14px;background:var(--bg2,#141414);border:1px solid var(--border,rgba(201,168,76,0.2));border-radius:8px;position:relative">
+          <div class="proposal-topic" style="font-size:12px;font-weight:600;color:var(--text,#e8e0d0);margin-bottom:4px">Batch Execute Selected Proposals (#4)</div>
+          <div class="proposal-preview" style="font-size:10px;color:var(--text-dim,#888)">Proposed by nasri-oracle • Multi-select batch dispatch</div>
+        </div>
+        <div class="proposal-card p-pending" style="padding:14px;background:var(--bg2,#141414);border:1px solid var(--border,rgba(201,168,76,0.2));border-radius:8px;position:relative">
+          <div class="proposal-topic" style="font-size:12px;font-weight:600;color:var(--text,#e8e0d0);margin-bottom:4px">Real-Time Active Execution Stream (#7)</div>
+          <div class="proposal-preview" style="font-size:10px;color:var(--text-dim,#888)">Proposed by pa-oracle • Console log stream card</div>
+        </div>
+        <div class="proposal-card p-pending" style="padding:14px;background:var(--bg2,#141414);border:1px solid var(--border,rgba(201,168,76,0.2));border-radius:8px;position:relative">
+          <div class="proposal-topic" style="font-size:12px;font-weight:600;color:var(--text,#e8e0d0);margin-bottom:4px">Worktree Hygiene Read-Only Audit</div>
+          <div class="proposal-preview" style="font-size:10px;color:var(--text-dim,#888)">Proposed by horus • 26 worktrees classification</div>
+        </div>
+      `;
+    }
+  }
+
+  function updateBatchFloatingBar() {
+    const bar = document.getElementById('batchFloatingBar');
+    const countText = document.getElementById('batchSelectedCountText');
+    const count = selectedTasksMap.size;
+
+    if (countText) countText.textContent = `${count} รายการ`;
+
+    if (bar) {
+      if (count >= 1) {
+        bar.classList.add('active');
+      } else {
+        bar.classList.remove('active');
+      }
+    }
+  }
+
+  window.clearBatchSelections = function() {
+    selectedTasksMap.clear();
+    document.querySelectorAll('.batch-proposal-checkbox').forEach(cb => cb.checked = false);
+    updateBatchFloatingBar();
+  };
+
+  window.runBatchExecutionLoop = async function() {
+    if (selectedTasksMap.size === 0) return;
+
+    const btn = document.getElementById('batchExecuteBtn');
+    const items = Array.from(selectedTasksMap.entries()); // [id, taskText]
+    const total = items.length;
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `⚡ กำลังส่ง 0/${total}...`;
+    }
+
+    const apiHost = typeof TRACKER_API !== 'undefined' ? TRACKER_API : '';
+    let successCount = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      const [id, taskText] = items[i];
+
+      if (btn) btn.innerHTML = `⚡ กำลังส่ง ${i + 1}/${total}...`;
+
+      try {
+        await fetch(apiHost + '/api/tracker/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task: taskText, from: 'tracker-ui' })
+        });
+        successCount++;
+      } catch (e) {
+        console.warn('[BatchExecute] Failed for item:', id, e);
+      }
+
+      // Delay 300ms per task to prevent spamming
+      if (i < items.length - 1) {
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }
+
+    if (btn) {
+      btn.innerHTML = `✓ ส่งแล้ว ${successCount}/${total}`;
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.innerHTML = '⚡ Execute Selected';
+        clearBatchSelections();
+      }, 1500);
+    } else {
+      clearBatchSelections();
+    }
+  };
+
+  // Attach Checkboxes to dynamically rendered proposal cards
+  function attachCheckboxesToCards() {
+    renderMockProposalsIfEmpty();
+
+    const cards = document.querySelectorAll('#proposalsGrid .proposal-card');
+    cards.forEach((card, idx) => {
+      if (card.querySelector('.batch-proposal-checkbox')) return; // already attached
+
+      const topicEl = card.querySelector('.proposal-topic') || card.querySelector('.proposal-card-title') || card;
+      const taskText = topicEl ? topicEl.textContent.trim() : `Proposal ${idx + 1}`;
+      const cardId = `batch-prop-${idx}`;
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'batch-proposal-checkbox';
+      cb.title = 'เลือกสั่งงานแบบ Batch';
+
+      cb.onclick = (e) => {
+        e.stopPropagation(); // prevent opening proposal detail modal
+        if (cb.checked) {
+          selectedTasksMap.set(cardId, taskText);
+        } else {
+          selectedTasksMap.delete(cardId);
+        }
+        updateBatchFloatingBar();
+      };
+
+      card.insertBefore(cb, card.firstChild);
+    });
+  }
+
+  // MutationObserver for dynamic proposal grid updates
+  const gridEl = document.getElementById('proposalsGrid');
+  if (gridEl) {
+    const observer = new MutationObserver(() => {
+      attachCheckboxesToCards();
+    });
+    observer.observe(gridEl, { childList: true, subtree: true });
+  }
+
+  // Hook every 1 second to ensure checkboxes persist across page pagination
+  setInterval(attachCheckboxesToCards, 1000);
+  attachCheckboxesToCards();
+})();
+</script>

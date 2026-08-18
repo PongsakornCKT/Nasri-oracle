@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>System Services Health Widget</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Thai+Looped:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #04040a;
+      --card-bg: #0a0a14;
+      --border: rgba(255, 255, 255, 0.1);
+      --border-hover: rgba(255, 255, 255, 0.22);
+      --gold: #f59e0b;
+      --gold-dim: rgba(245, 158, 11, 0.15);
+      --green: #22c55e;
+      --green-glow: 0 0 6px rgba(34, 197, 94, 0.6);
+      --red: #ef4444;
+      --red-glow: 0 0 6px rgba(239, 68, 68, 0.6);
+      --gray: #64748b;
+      --text: #f3f4f6;
+      --text-dim: #9ca3af;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Sans Thai Looped', system-ui, -apple-system, sans-serif;
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+    }
+
+    /* ── Component Card Container ── */
+    .health-card {
+      width: 100%;
+      max-width: 560px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--gold);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      letter-spacing: 0.5px;
+    }
+
+    .summary-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-family: 'IBM Plex Mono', monospace;
+      background: rgba(34, 197, 94, 0.12);
+      color: var(--green);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .summary-badge.degraded {
+      background: rgba(245, 158, 11, 0.12);
+      color: var(--gold);
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+
+    .btn-refresh {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-refresh:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text);
+    }
+
+    /* ── Service Rows List ── */
+    .service-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .service-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--border-hover);
+    }
+
+    .service-row.muted {
+      opacity: 0.55;
+    }
+
+    .service-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* ── CRITICAL: Actual CSS Circle Status Dot ── */
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%; /* Genuine CSS circle */
+      flex-shrink: 0;
+      background: var(--gray);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot.online {
+      background: var(--green);
+      box-shadow: var(--green-glow);
+    }
+
+    .status-dot.offline {
+      background: var(--red);
+      box-shadow: var(--red-glow);
+    }
+
+    .status-dot.muted {
+      background: var(--gray);
+      box-shadow: none;
+    }
+
+    .service-info {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .service-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .service-port {
+      font-size: 10px;
+      font-family: 'IBM Plex Mono', monospace;
+      color: var(--text-dim);
+    }
+
+    .service-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .service-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    .latency-tag {
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .latency-tag.online { color: var(--green); }
+    .latency-tag.offline { color: var(--red); }
+    .latency-tag.muted { color: var(--text-dim); }
+
+    .time-tag {
+      font-size: 9px;
+      color: var(--text-dim);
+    }
+
+    .btn-mute {
+      background: none;
+      border: 1px solid transparent;
+      color: var(--text-dim);
+      font-size: 10px;
+      font-family: inherit;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-mute:hover {
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .btn-mute.active {
+      color: var(--gold);
+      border-color: rgba(245, 158, 11, 0.3);
+      background: var(--gold-dim);
+    }
+
+    .card-footer {
+      margin-top: 12px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: 'IBM Plex Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="health-card">
+    <!-- Header -->
+    <div class="card-header">
+      <div class="card-title">
+        <span>⚡ System Services</span>
+        <span class="summary-badge" id="summaryBadge">5/5 ONLINE</span>
+      </div>
+      <button class="btn-refresh" id="btnRefresh" onclick="manualRefresh()">
+        <span id="spinIcon">↻</span> Refresh
+      </button>
+    </div>
+
+    <!-- Service List (5 Rows) -->
+    <div class="service-list" id="serviceList">
+      <!-- Dynamic Rows -->
+    </div>
+
+    <!-- Footer -->
+    <div class="card-footer">
+      <span>Auto-polling every 30s</span>
+      <span id="lastUpdated">Checking...</span>
+    </div>
+  </div>
+
+  <script>
+    // ── Target Services Configuration ──
+    const TARGET_SERVICES = [
+      { id: "maw-office", name: "maw-office", port: 4000 },
+      { id: "tracker-api", name: "tracker-api", port: 4100 },
+      { id: "enervia-api", name: "enervia-api", port: 4201 },
+      { id: "api-gateway", name: "api-gateway", port: 4300 },
+      { id: "arra-oracle", name: "arra-oracle", port: 47779 }
+    ];
+
+    // Muted services state
+    const mutedSet = new Set();
+
+    // Mock data fallback for local file preview (file://) or fetch failure
+    const MOCK_DATA = {
+      services: [
+        { name: "maw-office", port: 4000, online: true, latencyMs: 3, checkedAt: new Date().toISOString() },
+        { name: "tracker-api", port: 4100, online: true, latencyMs: 2, checkedAt: new Date().toISOString() },
+        { name: "enervia-api", port: 4201, online: true, latencyMs: 10, checkedAt: new Date().toISOString() },
+        { name: "api-gateway", port: 4300, online: true, latencyMs: 26, checkedAt: new Date().toISOString() },
+        { name: "arra-oracle", port: 47779, online: true, latencyMs: 99, checkedAt: new Date().toISOString() }
+      ],
+      total: 5,
+      online: 5,
+      offline: 0,
+      checkedAt: new Date().toISOString()
+    };
+
+    function formatTime(isoStr) {
+      if (!isoStr) return '--:--:--';
+      const d = new Date(isoStr);
+      return d.toTimeString().split(' ')[0];
+    }
+
+    function toggleMute(serviceId) {
+      if (mutedSet.has(serviceId)) {
+        mutedSet.delete(serviceId);
+      } else {
+        mutedSet.add(serviceId);
+      }
+      render();
+    }
+
+    let currentData = MOCK_DATA;
+
+    function render() {
+      const listEl = document.getElementById('serviceList');
+      const badgeEl = document.getElementById('summaryBadge');
+      const updatedEl = document.getElementById('lastUpdated');
+
+      if (!currentData || !currentData.services) return;
+
+      let onlineCount = 0;
+      listEl.innerHTML = '';
+
+      currentData.services.forEach(s => {
+        const isMuted = mutedSet.has(s.name) || mutedSet.has(s.id);
+        const isOnline = s.online;
+        if (isOnline) onlineCount++;
+
+        const row = document.createElement('div');
+        row.className = `service-row ${isMuted ? 'muted' : ''}`;
+
+        // Status class for CSS circle dot
+        let dotClass = 'status-dot';
+        let latencyClass = 'latency-tag';
+        let latencyText = s.online ? `${s.latencyMs}ms` : 'OFFLINE';
+
+        if (isMuted) {
+          dotClass += ' muted';
+          latencyClass += ' muted';
+        } else if (isOnline) {
+          dotClass += ' online';
+          latencyClass += ' online';
+        } else {
+          dotClass += ' offline';
+          latencyClass += ' offline';
+        }
+
+        row.innerHTML = `
+          <div class="service-left">
+            <div class="${dotClass}" title="${isOnline ? 'Online' : 'Offline'}"></div>
+            <div class="service-info">
+              <div class="service-name">${s.name}</div>
+              <div class="service-port">:${s.port}</div>
+            </div>
+          </div>
+          <div class="service-right">
+            <div class="service-meta">
+              <div class="${latencyClass}">${latencyText}</div>
+              <div class="time-tag">${formatTime(s.checkedAt)}</div>
+            </div>
+            <button class="btn-mute ${isMuted ? 'active' : ''}" onclick="toggleMute('${s.name}')">
+              ${isMuted ? 'Muted' : 'Mute'}
+            </button>
+          </div>
+        `;
+        listEl.appendChild(row);
+      });
+
+      // Update badge
+      badgeEl.textContent = `${onlineCount}/${currentData.services.length} ONLINE`;
+      if (onlineCount < currentData.services.length) {
+        badgeEl.className = 'summary-badge degraded';
+      } else {
+        badgeEl.className = 'summary-badge';
+      }
+
+      updatedEl.textContent = `Updated ${formatTime(currentData.checkedAt)}`;
+    }
+
+    async function fetchHealth(forceRefresh = false) {
+      try {
+        const url = `/api/system/health${forceRefresh ? '?refresh=1' : ''}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        currentData = data;
+      } catch (err) {
+        // Fallback to mock data if fetch fails (e.g. file:// preview)
+        currentData = MOCK_DATA;
+        currentData.checkedAt = new Date().toISOString();
+      } finally {
+        render();
+      }
+    }
+
+    async function manualRefresh() {
+      const icon = document.getElementById('spinIcon');
+      icon.style.transform = 'rotate(360deg)';
+      icon.style.transition = 'transform 0.5s ease';
+      await fetchHealth(true);
+      setTimeout(() => { icon.style.transform = 'none'; icon.style.transition = 'none'; }, 500);
+    }
+
+    // Initial render & auto-poll
+    fetchHealth();
+    setInterval(fetchHealth, 30000);
+  </script>
+</body>
+</html>

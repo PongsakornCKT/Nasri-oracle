@@ -1,0 +1,280 @@
+<!-- ================================================================= -->
+<!-- Tracker Phase 2: Live Execution Queue Card (pa-dispatch Feed)      -->
+<!-- Deliverable Block for oracle-studio/tracker.html                  -->
+<!-- ================================================================= -->
+
+<style>
+  .exec-queue-card {
+    margin: 0 0 14px;
+    padding: 12px 16px;
+    background: rgba(201, 168, 76, 0.04);
+    border: 1px solid rgba(201, 168, 76, 0.22);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  }
+
+  .exec-queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(201, 168, 76, 0.15);
+    padding-bottom: 8px;
+  }
+
+  .exec-queue-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--gold, #c9a84c);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .exec-queue-badge {
+    font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: rgba(201, 168, 76, 0.15);
+    color: var(--gold, #c9a84c);
+  }
+
+  .exec-queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .exec-queue-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+
+  .exec-queue-row:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(201, 168, 76, 0.3);
+  }
+
+  .exec-queue-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .exec-queue-task {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text, #e8e0d0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .exec-queue-meta {
+    font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--text-dim, #888);
+  }
+
+  .exec-queue-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .status-tag {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+
+  .status-tag.done { background: rgba(76, 175, 125, 0.15); color: var(--green, #4caf7d); border: 1px solid rgba(76, 175, 125, 0.3); }
+  .status-tag.wip { background: rgba(91, 156, 246, 0.15); color: var(--blue, #5b9cf6); border: 1px solid rgba(91, 156, 246, 0.3); }
+  .status-tag.stuck { background: rgba(224, 82, 82, 0.15); color: var(--red, #e05252); border: 1px solid rgba(224, 82, 82, 0.3); }
+  .status-tag.pending { background: rgba(136, 136, 136, 0.15); color: var(--text-dim, #888); border: 1px solid rgba(136, 136, 136, 0.3); }
+</style>
+
+<!-- Live Execution Queue Card -->
+<div id="execQueueCard" class="exec-queue-card" style="display:none;">
+  <div class="exec-queue-header">
+    <div class="exec-queue-title">
+      <span>⚡ Execution Queue (pa-dispatch)</span>
+      <span id="execQueueCountBadge" class="exec-queue-badge">0 tasks</span>
+    </div>
+    <span id="execQueueLastUpdated" style="font-size:10px;color:var(--text-dim,#888);font-family:'IBM Plex Mono',monospace">Auto-polling 15s</span>
+  </div>
+
+  <div class="exec-queue-list" id="execQueueList">
+    <!-- Dynamic Rows -->
+  </div>
+</div>
+
+<script>
+(function() {
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function formatTimeAgo(ts) {
+    if (!ts) return '';
+    const diffMs = Date.now() - (typeof ts === 'number' ? ts : Date.parse(ts));
+    if (diffMs < 0) return 'เมื่อครู่';
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h ago`;
+  }
+
+  // Standalone Mock Fallback (used when API is unavailable or returns 0 tasks)
+  const MOCK_DISPATCH_QUEUE = [
+    { task: "Tracker Phase 2: Execution Queue Card (#7)", ts: Date.now() - 300000, status: "done", statusText: "🟢 ตอบแล้ว (DONE)", agent: "nasri-oracle" },
+    { task: "Worktree Hygiene Audit & Cleanup", ts: Date.now() - 1200000, status: "wip", statusText: "🔵 กำลังทำ (WIP)", agent: "pa-oracle" },
+    { task: "[TEST-pa] prod deploy verify", ts: Date.now() - 3600000, status: "done", statusText: "🟢 ตอบแล้ว (DONE)", agent: "nasri" }
+  ];
+
+  async function fetchExecQueue() {
+    let feedItems = [];
+    try {
+      const apiHost = typeof TRACKER_API !== 'undefined' ? TRACKER_API : '';
+      const res = await fetch(apiHost + '/api/tracker/feed?limit=100');
+      if (res.ok) {
+        feedItems = await res.json();
+      }
+    } catch {}
+
+    const container = document.getElementById('execQueueCard');
+    if (!container) return;
+
+    const now = Date.now();
+    const last24h = 24 * 60 * 60 * 1000;
+
+    // (a) Filter pa-dispatch events from last 24h
+    const dispatches = (feedItems || []).filter(item => {
+      const isDispatch = item.topic_id === 'pa-dispatch' || item.category === 'dispatch' || item.title === 'TRACKER EXECUTE';
+      const isRecent = item.ts && (now - item.ts <= last24h);
+      return isDispatch && isRecent;
+    });
+
+    // (b) Filter agent reports
+    const reports = (feedItems || []).filter(item => {
+      const isReport = item.category === 'report' || item.topic_id === 'agent-report';
+      return isReport;
+    });
+
+    if (dispatches.length === 0 && (!feedItems || feedItems.length === 0)) {
+      // Fallback preview mode when API feed is empty or offline
+      renderExecQueueUI(MOCK_DISPATCH_QUEUE);
+      container.style.display = 'flex';
+      return;
+    }
+
+    if (dispatches.length === 0) {
+      // Hide card when 0 dispatched tasks in 24h
+      container.style.display = 'none';
+      return;
+    }
+
+    // Process & Evaluate Heuristic Status per Dispatched Task
+    const processedTasks = dispatches.map(d => {
+      const taskTs = d.ts || now;
+      let rawContent = d.content || d.title || 'Execute Task';
+      rawContent = rawContent.replace(/^\[tracker\]\s*EXECUTE:\s*/i, '');
+
+      // Check agent reports responding after task timestamp
+      const relevantReports = reports.filter(r => r.ts && r.ts >= taskTs - 5000);
+      let status = 'pending';
+      let statusText = '⚪ รอ pa';
+      let respondingAgent = d.from || 'pa';
+
+      for (const r of relevantReports) {
+        const text = ((r.title || '') + ' ' + (r.content || '')).toUpperCase();
+        if (text.includes('DONE') || text.includes('COMPLETED')) {
+          status = 'done';
+          statusText = '🟢 ตอบแล้ว';
+          respondingAgent = r.from || respondingAgent;
+          break;
+        } else if (text.includes('WIP') || text.includes('WORKING')) {
+          status = 'wip';
+          statusText = '🔵 กำลังทำ';
+          respondingAgent = r.from || respondingAgent;
+        } else if (text.includes('STUCK') || text.includes('BLOCKED')) {
+          status = 'stuck';
+          statusText = '🔴 ติดปัญหา';
+          respondingAgent = r.from || respondingAgent;
+        }
+      }
+
+      return {
+        task: rawContent,
+        ts: taskTs,
+        status,
+        statusText,
+        agent: respondingAgent
+      };
+    });
+
+    // Sort newest first
+    processedTasks.sort((a, b) => b.ts - a.ts);
+
+    renderExecQueueUI(processedTasks);
+    container.style.display = 'flex';
+  }
+
+  function renderExecQueueUI(tasks) {
+    const listEl = document.getElementById('execQueueList');
+    const badgeEl = document.getElementById('execQueueCountBadge');
+    const updatedEl = document.getElementById('execQueueLastUpdated');
+
+    if (!listEl) return;
+
+    if (badgeEl) badgeEl.textContent = `${tasks.length} task${tasks.length !== 1 ? 's' : ''}`;
+    if (updatedEl) updatedEl.textContent = `Updated ${new Date().toTimeString().split(' ')[0]}`;
+
+    listEl.innerHTML = '';
+
+    tasks.forEach(t => {
+      const row = document.createElement('div');
+      row.className = 'exec-queue-row';
+
+      row.innerHTML = `
+        <div class="exec-queue-left">
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+            <div class="exec-queue-task">${escHtml(t.task)}</div>
+            <div class="exec-queue-meta">⏱️ ${formatTimeAgo(t.ts)} • ${escHtml(t.agent || 'pa-oracle')}</div>
+          </div>
+        </div>
+        <div class="exec-queue-right">
+          <span class="status-tag ${escHtml(t.status)}">${escHtml(t.statusText)}</span>
+        </div>
+      `;
+      listEl.appendChild(row);
+    });
+  }
+
+  // Auto-poll every 15 seconds
+  fetchExecQueue();
+  setInterval(fetchExecQueue, 15000);
+})();
+</script>

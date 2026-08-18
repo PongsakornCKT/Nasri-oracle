@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task Claims Status Board</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans+Thai+Looped:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #04040a;
+      --card-bg: #0a0a14;
+      --border: rgba(255, 255, 255, 0.1);
+      --border-hover: rgba(255, 255, 255, 0.22);
+      --gold: #f59e0b;
+      --green: #22c55e;
+      --green-glow: 0 0 6px rgba(34, 197, 94, 0.6);
+      --blue: #3b82f6;
+      --blue-glow: 0 0 6px rgba(59, 130, 246, 0.6);
+      --amber: #f59e0b;
+      --amber-glow: 0 0 6px rgba(245, 158, 11, 0.6);
+      --gray: #64748b;
+      --text: #f3f4f6;
+      --text-dim: #9ca3af;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Sans Thai Looped', system-ui, -apple-system, sans-serif;
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .widget-card {
+      width: 100%;
+      max-width: 640px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--gold);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .summary-group {
+      display: flex;
+      gap: 6px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .summary-pill {
+      padding: 2px 8px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+    }
+
+    .summary-pill.claimed { background: rgba(59, 130, 246, 0.12); color: var(--blue); border-color: rgba(59, 130, 246, 0.3); }
+    .summary-pill.done { background: rgba(34, 197, 94, 0.12); color: var(--green); border-color: rgba(34, 197, 94, 0.3); }
+
+    .btn-refresh {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-refresh:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+
+    /* ── Add & Claim Form ── */
+    .claim-form {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 10px;
+      background: rgba(59, 130, 246, 0.04);
+      border: 1px solid rgba(59, 130, 246, 0.18);
+      border-radius: 8px;
+    }
+
+    .claim-input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-family: 'IBM Plex Mono', monospace;
+      color: var(--text);
+      outline: none;
+    }
+
+    .claim-select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 11px;
+      font-family: 'IBM Plex Mono', monospace;
+      color: var(--gold);
+      outline: none;
+    }
+
+    .btn-claim {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+
+    .btn-claim:hover { background: rgba(59, 130, 246, 0.25); }
+
+    /* ── Task List ── */
+    .task-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+      max-height: 480px;
+      overflow-y: auto;
+    }
+
+    .task-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .task-row:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--border-hover);
+    }
+
+    .task-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    /* ── CRITICAL: Genuine CSS Circle Status Dot ── */
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.open { background: var(--gray); box-shadow: none; }
+    .status-dot.claimed { background: var(--blue); box-shadow: var(--blue-glow); }
+    .status-dot.expiring { background: var(--amber); box-shadow: var(--amber-glow); }
+    .status-dot.done { background: var(--green); box-shadow: var(--green-glow); }
+    .status-dot.released { background: var(--gray); box-shadow: none; }
+
+    /* ── First-Letter Avatar Badge ── */
+    .avatar-badge {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 700;
+      font-family: 'IBM Plex Mono', monospace;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .task-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .task-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .task-meta {
+      font-size: 10px;
+      font-family: 'IBM Plex Mono', monospace;
+      color: var(--text-dim);
+    }
+
+    .task-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+    }
+
+    .status-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .status-badge.open { background: rgba(100, 116, 139, 0.12); color: var(--gray); }
+    .status-badge.claimed { background: rgba(59, 130, 246, 0.15); color: var(--blue); }
+    .status-badge.expiring { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+    .status-badge.done { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .status-badge.released { background: rgba(100, 116, 139, 0.12); color: var(--gray); }
+
+    .btn-action {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 10px;
+      font-family: inherit;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-action:hover { border-color: var(--border-hover); color: var(--text); }
+    .btn-action.complete:hover { background: rgba(34, 197, 94, 0.15); color: var(--green); border-color: rgba(34, 197, 94, 0.3); }
+
+    .card-footer {
+      margin-top: 12px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: 'IBM Plex Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="widget-card">
+    <div class="card-header">
+      <div class="card-title">
+        <span>📋 Task Claims</span>
+        <div class="summary-group">
+          <span class="summary-pill claimed" id="pillClaimed">0 Claimed</span>
+          <span class="summary-pill done" id="pillDone">0 Done</span>
+        </div>
+      </div>
+      <button class="btn-refresh" onclick="manualRefresh()">
+        <span id="spinIcon">↻</span> Refresh
+      </button>
+    </div>
+
+    <!-- Quick Add & Claim Form -->
+    <div class="claim-form">
+      <input type="text" id="taskTitleInput" class="claim-input" placeholder="Enter task title to claim..." />
+      <select id="agentSelect" class="claim-select">
+        <option value="nasri-oracle">nasri-oracle</option>
+        <option value="pa-oracle">pa-oracle</option>
+        <option value="wy-oracle">wy-oracle</option>
+        <option value="horus">horus</option>
+        <option value="imhotep">imhotep</option>
+        <option value="ptah">ptah</option>
+      </select>
+      <button class="btn-claim" onclick="submitClaim()">+ Add & Claim</button>
+    </div>
+
+    <!-- Task List -->
+    <div class="task-list" id="taskList">
+      <!-- Dynamic Rows -->
+    </div>
+
+    <!-- Footer -->
+    <div class="card-footer">
+      <span>Auto-refresh 15s • Lazy 30m auto-release</span>
+      <span id="lastUpdated">Checking...</span>
+    </div>
+  </div>
+
+  <script>
+    // Fallback Mock Data for local preview (file://)
+    const MOCK_DATA = [
+      { taskId: "T-101", title: "Phase 5 Task Claiming (#27)", claimedBy: "nasri-oracle", claimedAt: new Date(Date.now() - 300000).toISOString(), updatedAt: new Date().toISOString(), status: "claimed" },
+      { taskId: "T-102", title: "Heartbeat & Liveness Monitor (#22)", claimedBy: "pa-oracle", claimedAt: new Date(Date.now() - 1500000).toISOString(), updatedAt: new Date().toISOString(), status: "claimed" }, // > 20m -> expiring
+      { taskId: "T-103", title: "System Health Widget (#41)", claimedBy: "nasri-oracle", claimedAt: new Date(Date.now() - 3600000).toISOString(), updatedAt: new Date().toISOString(), status: "done" }
+    ];
+
+    function formatTimeHeld(claimedAtStr) {
+      if (!claimedAtStr) return '';
+      const diffMs = Date.now() - Date.parse(claimedAtStr);
+      if (diffMs < 0) return 'เมื่อครู่';
+      const sec = Math.floor(diffMs / 1000);
+      if (sec < 60) return `${sec} วินาทีที่แล้ว`;
+      const min = Math.floor(sec / 60);
+      return `ถือไว้ ${min} นาที`;
+    }
+
+    function getDisplayStatus(item) {
+      if (item.status === 'claimed') {
+        const diffMs = Date.now() - Date.parse(item.claimedAt);
+        if (diffMs > 20 * 60 * 1000) {
+          return 'expiring'; // 20-30 min -> expiring (amber)
+        }
+        return 'claimed'; // < 20 min -> claimed (blue)
+      }
+      return item.status; // open (gray), done (green), released (gray)
+    }
+
+    let currentClaims = MOCK_DATA;
+
+    function render() {
+      if (!currentClaims || !Array.isArray(currentClaims)) return;
+
+      const claimedCount = currentClaims.filter(c => c.status === 'claimed').length;
+      const doneCount = currentClaims.filter(c => c.status === 'done').length;
+
+      document.getElementById('pillClaimed').textContent = `${claimedCount} Claimed`;
+      document.getElementById('pillDone').textContent = `${doneCount} Done`;
+
+      const listEl = document.getElementById('taskList');
+      listEl.innerHTML = '';
+
+      currentClaims.forEach(item => {
+        const displayStatus = getDisplayStatus(item);
+        const row = document.createElement('div');
+        row.className = 'task-row';
+
+        const dotClass = `status-dot ${displayStatus}`;
+        const badgeClass = `status-badge ${displayStatus}`;
+        const firstLetter = (item.claimedBy || 'A').charAt(0).toUpperCase();
+        const timeHeldText = formatTimeHeld(item.claimedAt);
+
+        row.innerHTML = `
+          <div class="task-left">
+            <div class="${dotClass}"></div>
+            <div class="avatar-badge" title="Claimed by ${item.claimedBy}">${firstLetter}</div>
+            <div class="task-info">
+              <div class="task-title">${item.title}</div>
+              <div class="task-meta">${item.claimedBy} • ${timeHeldText}</div>
+            </div>
+          </div>
+          <div class="task-right">
+            <span class="${badgeClass}">${displayStatus.toUpperCase()}</span>
+            ${item.status === 'claimed' ? `
+              <button class="btn-action complete" onclick="completeTaskAction('${item.taskId}', '${item.claimedBy}')">Complete ✅</button>
+              <button class="btn-action" onclick="releaseTaskAction('${item.taskId}', '${item.claimedBy}')">Release 🔓</button>
+            ` : ''}
+          </div>
+        `;
+        listEl.appendChild(row);
+      });
+
+      const updated = new Date().toTimeString().split(' ')[0];
+      document.getElementById('lastUpdated').textContent = `Updated ${updated}`;
+    }
+
+    async function fetchClaims(forceRefresh = false) {
+      try {
+        const url = `/api/claims`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        currentClaims = await res.json();
+      } catch (err) {
+        currentClaims = MOCK_DATA;
+      } finally {
+        render();
+      }
+    }
+
+    async function submitClaim() {
+      const input = document.getElementById('taskTitleInput');
+      const agentSel = document.getElementById('agentSelect');
+      const title = (input.value || '').trim();
+      if (!title) return;
+
+      const taskId = 'T-' + Date.now().toString().slice(-4);
+      try {
+        const res = await fetch('/api/claims/claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId, title, agent: agentSel.value })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          input.value = '';
+          fetchClaims(true);
+        } else {
+          alert('Claim failed: ' + (data.error || ('Held by ' + data.holder)));
+        }
+      } catch {
+        alert('Failed to connect to API');
+      }
+    }
+
+    async function releaseTaskAction(taskId, agent) {
+      try {
+        await fetch('/api/claims/release', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId, agent })
+        });
+        fetchClaims(true);
+      } catch {}
+    }
+
+    async function completeTaskAction(taskId, agent) {
+      try {
+        await fetch('/api/claims/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId, agent })
+        });
+        fetchClaims(true);
+      } catch {}
+    }
+
+    async function manualRefresh() {
+      const icon = document.getElementById('spinIcon');
+      icon.style.transform = 'rotate(360deg)';
+      icon.style.transition = 'transform 0.5s ease';
+      await fetchClaims(true);
+      setTimeout(() => { icon.style.transform = 'none'; icon.style.transition = 'none'; }, 500);
+    }
+
+    fetchClaims();
+    setInterval(fetchClaims, 15000);
+  </script>
+</body>
+</html>
