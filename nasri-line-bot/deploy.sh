@@ -46,13 +46,18 @@ echo "  ✓ mcp-qsolar uploaded"
 echo "🐍 Uploading mcp-bomsolar..."
 BOMSOLAR_SRC="$REPO_ROOT/mcp-bomsolar"
 BOMSOLAR_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar"
-for f in server.py sheets.py; do
+for f in server.py sheets.py survey_catalog.py srp_calculator.py srp_calc_cli.py; do
   [ -f "$BOMSOLAR_SRC/$f" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_SRC/$f" "$BOMSOLAR_DEST/$f" && echo "  ✓ $f"
 done
 # scripts/ subdirectory
 BOMSOLAR_SCRIPTS_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar/scripts"
 for f in generate_bom_pdf.py __init__.py; do
   [ -f "$BOMSOLAR_SRC/scripts/$f" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_SRC/scripts/$f" "$BOMSOLAR_SCRIPTS_DEST/$f" && echo "  ✓ scripts/$f"
+done
+# fixtures/ subdirectory
+BOMSOLAR_FIXTURES_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar/fixtures"
+for f in pricelist_fixture.json qpkg_fixture.json; do
+  [ -f "$BOMSOLAR_SRC/fixtures/$f" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_SRC/fixtures/$f" "$BOMSOLAR_FIXTURES_DEST/$f" && echo "  ✓ fixtures/$f"
 done
 echo "  ✓ mcp-bomsolar uploaded"
 
@@ -95,6 +100,44 @@ for f in \
   [ -f "$PIC_SRC/$f" ] && curl -s --ftp-create-dirs -T "$PIC_SRC/$f" "$PIC_DEST/$f" || true
 done
 echo "  ✓ Images uploaded"
+
+# ── 4b. Verify mcp-bomsolar uploads (sha1 match) ─────────────
+echo "🔍 Verifying mcp-bomsolar uploads..."
+VERIFY_FAIL=0
+BOMSOLAR_REMOTE="$FTP/ai.enervia.co.th/mcp-bomsolar"
+verify_file() {
+  local local_path="$1" remote_url="$2" label="$3"
+  [ -f "$local_path" ] || return 0
+  local local_sha remote_sha tmp
+  local_sha=$(sha1sum "$local_path" | cut -d' ' -f1)
+  tmp=$(mktemp)
+  if curl -s -o "$tmp" "$remote_url" 2>/dev/null; then
+    remote_sha=$(sha1sum "$tmp" | cut -d' ' -f1)
+  else
+    remote_sha="DOWNLOAD_FAILED"
+  fi
+  rm -f "$tmp"
+  if [ "$local_sha" = "$remote_sha" ]; then
+    echo "  ✓ $label  $local_sha"
+  else
+    echo "  ✗ $label  local=$local_sha remote=$remote_sha" >&2
+    VERIFY_FAIL=1
+  fi
+}
+for f in server.py sheets.py survey_catalog.py srp_calculator.py srp_calc_cli.py; do
+  verify_file "$BOMSOLAR_SRC/$f" "$BOMSOLAR_REMOTE/$f" "$f"
+done
+for f in generate_bom_pdf.py __init__.py; do
+  verify_file "$BOMSOLAR_SRC/scripts/$f" "$BOMSOLAR_REMOTE/scripts/$f" "scripts/$f"
+done
+for f in pricelist_fixture.json qpkg_fixture.json; do
+  verify_file "$BOMSOLAR_SRC/fixtures/$f" "$BOMSOLAR_REMOTE/fixtures/$f" "fixtures/$f"
+done
+if [ "$VERIFY_FAIL" -ne 0 ]; then
+  echo "❌ Verification failed — aborting before restart." >&2
+  exit 1
+fi
+echo "  ✓ All verified"
 
 # ── 5. Plesk restart ──────────────────────────────────────────
 echo "🔄 Logging into Plesk..."
