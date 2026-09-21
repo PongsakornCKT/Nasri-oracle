@@ -543,6 +543,62 @@ function designInverters(invRows, targetKw, phase, brand) {
   return bestSingle || bestMix || [];
 }
 
+function buildAtmoceQuickReply(origText) {
+  var cleanText = (origText || '').replace(/1:1|2:1|mi-500|mi-1250/gi, '').trim();
+  if (!cleanText) cleanText = 'atmoce';
+  return {
+    type: 'text',
+    text: 'กรุณาเลือกอัตราส่วน Micro Inverter ของระบบ ATMOCE ครับ:\n• 2:1 = 1 ไมโครต่อ 2 แผง (แนะนำ)\n• 1:1 = 1 ไมโครต่อ 1 แผง',
+    quickReply: {
+      items: [
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: '2:1 (แนะนำ)',
+            text: cleanText + ' 2:1'
+          }
+        },
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: '1:1',
+            text: cleanText + ' 1:1'
+          }
+        }
+      ]
+    }
+  };
+}
+
+function callBomsolarCli(payload) {
+  return new Promise(function(resolve, reject) {
+    var cp = require('child_process');
+    var scriptPath = path.join(__dirname, '..', 'mcp-bomsolar', 'srp_calc_cli.py');
+    if (!fs.existsSync(scriptPath)) {
+      scriptPath = path.join(__dirname, 'mcp-bomsolar', 'srp_calc_cli.py');
+    }
+    var cmd = 'python3 ' + JSON.stringify(scriptPath) + ' ' + JSON.stringify(JSON.stringify(payload));
+    cp.exec(cmd, { cwd: __dirname }, function(err, stdout, stderr) {
+      if (err) {
+        var errMessage = stderr || err.message;
+        try {
+          var parsedErr = JSON.parse((stderr || stdout).trim());
+          if (parsedErr && parsedErr.error) errMessage = parsedErr.error;
+        } catch (e) {}
+        return reject(new Error(errMessage));
+      }
+      try {
+        var res = JSON.parse(stdout.trim());
+        resolve(res);
+      } catch (e) {
+        reject(new Error('Failed to parse Python output: ' + stdout));
+      }
+    });
+  });
+}
+
 // ─── Smart System Spec Parser ────────────────────────────────
 // Parses natural language like "atmoce 5kw 1phase แผง JA625 + batt + backup"
 // into BOM items from the Google Sheets catalog
@@ -608,59 +664,56 @@ async function parseSystemSpec(text) {
     var invRows = catalog[invSheet] || [];
 
     if (invBrand === 'ATMOCE') {
-      // Detect C&I: ≥30kW or explicit C&I keyword
-      var isCI = systemKw >= 30 || /c&i|c\si|commercial|โรงงาน/i.test(lo);
-      var miModel, miName, miKw, miFallbackPrice, miRow, miQty;
-      if (isCI) {
-        // C&I: MI-1250 (1.25kW each)
-        miModel = 'MI-1250';
-        miName = 'Micro Inverter MI-1250 (1.25kW)';
-        miKw = 1.25;
-        miFallbackPrice = 4750;
-        miRow = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MI-1250') >= 0 && Object.values(r).join(' ').toLowerCase().indexOf('warranty') >= 0; });
-        if (!miRow) miRow = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MI-1250') >= 0; });
+      var isRatioSpecified = /1:1|2:1|mi-500|mi-1250/i.test(lo);
+      if (!isRatioSpecified) {
+        return { isAtmoceQuickReply: true, quickReplyMsg: buildAtmoceQuickReply(text) };
+      }
+      var ratio = /1:1|mi-500/i.test(lo) ? '1:1' : '2:1';
+
+      var panelCount = 0;
+      var pcm = text.match(/(\d+)\s*แผ[งง่]/);
+      if (pcm) {
+        panelCount = parseInt(pcm[1]);
       } else {
-        // Residential default: MI-500 (0.5kW each)
-        miModel = 'MI-500';
-        miName = 'Micro Inverter MI-500 (0.5kW)';
-        miKw = 0.5;
-        miFallbackPrice = 4400;
-        miRow = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MI-500') >= 0 && Object.values(r).join(' ').toLowerCase().indexOf('warranty') >= 0; });
-        if (!miRow) miRow = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MI-500') >= 0; });
+        var kwm = lo.match(/(\d+(?:\.\d+)?)\s*kw/);
+        var kw = kwm ? parseFloat(kwm[1]) : systemKw;
+        panelCount = Math.ceil(kw * 1000 / 650);
       }
-      miQty = Math.ceil(systemKw / miKw);
-      var miPrice = miRow ? extractPrice(miRow) : miFallbackPrice;
-      items.push({ part_number: miModel, part_name: miName, manufacturer: 'ATMOCE', category: 'อินเวอร์เตอร์', quantity: miQty, unit_cost: miPrice, total_cost: miQty * miPrice, notes: '' });
-      // Combiner box
-      var combiner = phase === '3P'
-        ? invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MC100T') >= 0; })
-        : invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MC100') >= 0 && Object.values(r).join(' ').indexOf('MC100T') < 0 && Object.values(r).join(' ').indexOf('MC100L') < 0 && Object.values(r).join(' ').indexOf('Wye') < 0; });
-      if (combiner) {
-        var cPrice = extractPrice(combiner);
-        var cName = extractField(combiner, ['sku', 'รายการ']) || (phase === '3P' ? 'MC100T' : 'MC100');
-        var cDesc = extractField(combiner, ['description', 'คำอธิบาย', 'รายละเอียด']) || 'M-Combiner';
-        items.push({ part_number: cName, part_name: cName + ' ' + cDesc, manufacturer: 'ATMOCE', category: 'general', quantity: 1, unit_cost: cPrice, total_cost: cPrice, notes: '' });
-      }
-      // ATMOCE battery
-      if (wantBatt) {
-        var abatt = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MS-7K') >= 0; });
-        if (abatt) {
-          var abPrice = extractPrice(abatt);
-          items.push({ part_number: 'MS-7K-U', part_name: 'M-Battery 7kWh', manufacturer: 'ATMOCE', category: 'battery', quantity: 1, unit_cost: abPrice, total_cost: abPrice, notes: '' });
+      if (panelCount <= 0) panelCount = 10;
+
+      var trunkLen = /1\.3\s*m|1\.3/i.test(lo) ? '1.3' : '2.5';
+
+      try {
+        var pyRes = await callBomsolarCli({
+          action: 'atmoce_n1',
+          panels: panelCount,
+          ratio: ratio,
+          phase: phase,
+          roof_type: roofType,
+          trunk_cable_length: trunkLen,
+          battery_kwh: battKwh,
+          backup: wantBackup
+        });
+
+        if (pyRes && pyRes.items) {
+          var resItems = pyRes.items.map(function(i) {
+            return {
+              part_number: i.part_number,
+              part_name: i.part_name,
+              manufacturer: i.manufacturer,
+              category: i.category,
+              quantity: i.quantity,
+              unit: i.unit,
+              unit_cost: i.unit_cost !== null ? i.unit_cost : 0,
+              total_cost: i.total_cost !== null ? i.total_cost : 0,
+              notes: i.notes || ''
+            };
+          });
+          resItems._summaryText = pyRes.summary_text;
+          return resItems;
         }
-        wantBatt = false; // handled
-      }
-      // ATMOCE backup
-      if (wantBackup) {
-        var bu = phase === '3P'
-          ? invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MU100T') >= 0; })
-          : invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MU100S') >= 0; });
-        if (bu) {
-          var buPrice = extractPrice(bu);
-          var buName = phase === '3P' ? 'MU100T' : 'MU100S';
-          items.push({ part_number: buName, part_name: buName + ' Backup Box', manufacturer: 'ATMOCE', category: 'general', quantity: 1, unit_cost: buPrice, total_cost: buPrice, notes: '' });
-        }
-        wantBackup = false;
+      } catch (e) {
+        return { isSurveyError: true, errorMsg: e.message };
       }
     } else if (invBrand === 'Sigenergy') {
       // Sigenergy: search EC inverters by phase suffix + kW from รายละเอียด
