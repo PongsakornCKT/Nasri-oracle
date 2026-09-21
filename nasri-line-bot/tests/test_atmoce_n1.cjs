@@ -1,5 +1,5 @@
 /**
- * Test suite: ATMOCE BOM N1 engine integration for Nasri LINE bot (Round 2)
+ * Test suite: ATMOCE BOM N1 engine integration for Nasri LINE bot (Round 3 - Mutation Hardened)
  * Run: LF_BOM_FIXTURE_MODE=1 node nasri-line-bot/tests/test_atmoce_n1.cjs
  */
 'use strict';
@@ -26,14 +26,14 @@ function runCliSync(args, envs) {
   return JSON.parse(stdout.trim());
 }
 
-console.log('=== ATMOCE BOM N1 Node.js Bridge Test Suite (Round 2) ===\n');
+console.log('=== ATMOCE BOM N1 Node.js Bridge Test Suite (Round 3) ===\n');
 
-// 1. Ratio unspecified detection test
+// 1. Ratio unspecified detection test (node test: unspecified ratio triggers quick reply)
 function isRatioSpecified(text) {
   return /1:1|2:1|mi-500|mi-1250/i.test(text);
 }
 
-test('1. "atmoce 10 แผง" without ratio is detected as unspecified',
+test('1. "atmoce 10 แผง" without ratio is detected as unspecified (requires quick reply)',
   !isRatioSpecified('atmoce 10 แผง'));
 
 test('2. "atmoce 2:1 10 แผง" ratio is detected',
@@ -98,6 +98,11 @@ try {
   test('16. No API key without fixture mode raises SurveyUnavailable',
     errText.indexOf('ไม่มี API Key') >= 0 || errText.indexOf('SurveyUnavailable') >= 0);
 }
+
+// 6. Test unspecified ratio call via Python CLI bridge -> must default to 2:1 ratio (MI-1250)
+var resNoRatio = runCliSync({ action: 'atmoce_n1', panels: 10, phase: '1P' });
+test('17. Engine call without ratio defaults to 2:1 MI-1250',
+  resNoRatio.success === true && resNoRatio.ratio === '2:1' && resNoRatio.inverter_sku === 'MI-1250' && resNoRatio.inverter_count === 5);
 
 console.log('\n=== Results: ' + passed + '/' + (passed + failed) + ' passed ===');
 if (failed) process.exit(1);

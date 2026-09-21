@@ -106,6 +106,9 @@ def calculate_atmoce_bom_n1(
     if panels <= 0:
         raise ValueError("จำนวนแผงต้องมากกว่า 0")
 
+    if ratio is None or not str(ratio).strip() or str(ratio).strip().lower() == "none":
+        ratio = "2:1"
+
     r_norm = str(ratio).strip().lower().replace(":", "")
     if r_norm in ("21", "2to1", "atmoce21", "2-1"):
         ratio_key = "2:1"

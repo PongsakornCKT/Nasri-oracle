@@ -1,21 +1,23 @@
-"""Golden Test Suite for ATMOCE BOM Engine N1 (#4) - Round 2.
+"""Golden Test Suite for ATMOCE BOM Engine N1 (#4) - Round 3.
 
-Verifies the 4 Golden Cases against staging snapshot prices:
+Verifies the Golden Cases against raw staging snapshot prices extracted directly in test:
 (a) atmoce21 10 แผง 1P
 (b) atmoce11 8 แผง 1P
 (c) atmoce21 20 แผง 3P
 (d) atmoce21 12 แผง + battery (MS-7K-U) 1P
 
-Also tests:
-- Line-by-line unit_cost assertions read directly from fixture snapshot in test (not via code under test).
-- Missing price policy (MW-025025-A 2.5m is not in snapshot -> missing price note + not counted in total).
-- SurveyUnavailable raised when API key is missing and fixture mode is OFF.
-- Production code grep check: NO hardcoded price numbers (4750, 4000, etc.) in srp_calculator.py.
+N1 Round 3 Strict Rules (Mutation Hardening):
+1. ALL unit_cost assertions MUST be computed directly from raw fixture JSON rows using explicit 0-indexed column numbers in the test file (r[6] for Keenoc, r[6]/r[5] for Cables, r[2] for Inverters/Combiner, r[5] for Panels).
+2. NEVER call survey_catalog.parse_pricelist_catalog inside the test file to construct expected values.
+3. Engine called with catalog_data=None so it executes the full fetch_pricelist pipeline under test.
+4. Unspecified ratio calls must default to 2:1 MI-1250.
+5. Production code grep check: NO hardcoded price numbers in srp_calculator.py.
 """
 
 import os
 import sys
 import json
+import re
 import pathlib
 import pytest
 
@@ -25,48 +27,70 @@ from srp_calculator import calculate_atmoce_bom_n1
 import survey_catalog
 
 
+def _num(val):
+    if val is None or val == "":
+        return None
+    try:
+        clean = re.sub(r'[^0-9.]', '', str(val))
+        return float(clean) if clean else None
+    except Exception:
+        return None
+
+
 @pytest.fixture(scope="module")
-def raw_snapshot_data():
+def raw_fixture_extracts():
     fixture_path = pathlib.Path(__file__).parent.parent / "fixtures" / "pricelist_fixture.json"
-    qpkg_path = pathlib.Path(__file__).parent.parent / "fixtures" / "qpkg_fixture.json"
     raw_price = json.loads(fixture_path.read_text(encoding="utf-8"))
-    raw_qpkg = json.loads(qpkg_path.read_text(encoding="utf-8"))
-    
-    # Calculate directly in test fixture for line-by-line assertions
-    tabs = raw_price["tabs"]
-    
-    # Direct lookup maps calculated independently in test:
-    # 1. Inverters: col 0 SKU, col 2 cost
-    inv_map = {}
+    tabs = raw_price.get("tabs", {})
+
+    # Direct raw extraction in test file using EXACT INDEXES required by spec (NO parse_pricelist_catalog call!):
+
+    # 1. Inverters - ATMOCE & Combiner: r[0] SKU/name, r[2] cost (STRICT INDEX 2)
+    inv_raw = {}
     for r in tabs.get("Inverters - ATMOCE", []):
-        if r and len(r) > 2 and r[0] and not str(r[0]).startswith("⚡") and not str(r[0]).startswith("📋") and r[0] not in ("SKU", "เฟส"):
-            inv_map[str(r[0]).strip()] = survey_catalog._cpl_num(r[2])
-            
-    # 2. Mounting: col 0 name, col 6 price (1 ชิ้น)
-    mount_map = {}
+        if isinstance(r, list) and len(r) > 2 and r[0] and not str(r[0]).startswith("⚡") and not str(r[0]).startswith("📋") and r[0] not in ("SKU", "เฟส"):
+            inv_raw[str(r[0]).strip()] = _num(r[2])
+
+    # 2. Mounting - Keenoc: r[0] name, r[6] price 1 piece (STRICT INDEX 6)
+    mount_raw = {}
     for r in tabs.get("Mounting - Keenoc", []):
-        if r and len(r) > 6 and r[0] and not str(r[0]).startswith("🏗") and r[0] != "รายการ":
-            mount_map[str(r[0]).strip()] = float(r[6]) if r[6] != "" and r[6] is not None else None
+        if isinstance(r, list) and len(r) > 6 and r[0] and not str(r[0]).startswith("🏗") and r[0] != "รายการ":
+            mount_raw[str(r[0]).strip()] = _num(r[6])  # STRICTLY index 6 (1 piece)
 
-    # 3. Solar Panels: col 0 Brand, col 1 Model, col 5 cost
-    panel_map = {}
+    # 3. Cables: r[1] brand, r[2] model, r[6] (<50k) fallback to r[5] (≥50k) (STRICT INDEX 6 / INDEX 5)
+    cable_raw = {}
+    for r in tabs.get("Cables", []):
+        if isinstance(r, list) and len(r) > 5 and r[0] and not str(r[0]).startswith("🔌") and not str(r[0]).startswith("⚡") and r[0] != "ประเภท":
+            brand = str(r[1] if len(r) > 1 and r[1] is not None else "").strip()
+            model = str(r[2] if len(r) > 2 and r[2] is not None else "").strip()
+            if not model:
+                continue
+            full_name = f"{brand} {model}".strip()
+            p6 = _num(r[6]) if len(r) > 6 else None
+            p5 = _num(r[5]) if len(r) > 5 else None
+            cable_raw[full_name] = p6 if p6 is not None else p5
+
+    # 4. Solar Panels: r[0] brand, r[1] model, r[5] cost (STRICT INDEX 5)
+    panel_raw = {}
     for r in tabs.get("Solar Panels", []):
-        if r and len(r) > 5 and r[0] and not str(r[0]).startswith("☀️") and r[0] != "แบรนด์":
-            k = f"{r[0]} {r[1]}".strip()
-            panel_map[k] = float(r[5]) if r[5] != "" and r[5] is not None else None
+        if isinstance(r, list) and len(r) > 5 and r[0] and not str(r[0]).startswith("☀️") and r[0] != "แบรนด์":
+            brand = str(r[0]).strip()
+            model = str(r[1] if len(r) > 1 and r[1] is not None else "").strip()
+            panel_raw[f"{brand} {model}".strip()] = _num(r[5])
 
-    cat_parsed = survey_catalog.parse_pricelist_catalog(tabs)
-    return cat_parsed, raw_qpkg, inv_map, mount_map, panel_map
+    return inv_raw, mount_raw, cable_raw, panel_raw
 
 
-def test_golden_case_a_atmoce21_10p_1p(raw_snapshot_data):
-    cat, qpkg, inv_map, mount_map, panel_map = raw_snapshot_data
+def test_golden_case_a_atmoce21_10p_1p(raw_fixture_extracts):
+    inv_raw, mount_raw, cable_raw, panel_raw = raw_fixture_extracts
+    
+    # Run engine with catalog_data=None so it runs survey_catalog fetch under test
     res = calculate_atmoce_bom_n1(
         panels=10,
         ratio="2:1",
         phase="1P",
-        catalog_data=cat,
-        qpkg_data=qpkg,
+        catalog_data=None,
+        qpkg_data=None,
     )
     assert res["success"] is True
     assert res["ratio"] == "2:1"
@@ -79,46 +103,46 @@ def test_golden_case_a_atmoce21_10p_1p(raw_snapshot_data):
 
     items = {item["part_number"]: item for item in res["items"]}
 
-    # Line-by-line unit cost assertions against test fixture direct maps:
-    assert items["AIKO AIKO-G650-MCH72Mw"]["unit_cost"] == panel_map["AIKO AIKO-G650-MCH72Mw"]  # 3283.0
+    # Direct raw index assertions:
+    assert items["AIKO AIKO-G650-MCH72Mw"]["unit_cost"] == panel_raw["AIKO AIKO-G650-MCH72Mw"]  # row[5] -> 3283.0
     assert items["AIKO AIKO-G650-MCH72Mw"]["quantity"] == 10
 
-    assert items["MI-1250"]["unit_cost"] == inv_map["MI-1250"]  # 4750.0
+    assert items["MI-1250"]["unit_cost"] == inv_raw["MI-1250"]  # row[2] -> 4750.0
     assert items["MI-1250"]["quantity"] == 5
 
     assert items["MW-025025-A"]["unit_cost"] is None  # Missing in staging snapshot
     assert items["MW-025025-A"]["total_cost"] is None
     assert items["MW-025025-A"]["quantity"] == 5
 
-    assert items["MC100"]["unit_cost"] == inv_map["MC100 Warranty 5 year"]  # 15900.0
+    assert items["MC100"]["unit_cost"] == inv_raw["MC100 Warranty 5 year"]  # row[2] -> 15900.0
     assert items["MC100"]["quantity"] == 1
 
-    assert items["MT-04003-A"]["unit_cost"] == inv_map["MT-04003-A"]  # 640.0
+    assert items["MT-04003-A"]["unit_cost"] == inv_raw["MT-04003-A"]  # row[2] -> 640.0
     assert items["MT-04003-A"]["quantity"] == 2
 
-    # Keenoc 4.8m rail calculation (10 panels in 1 row -> 11.62m -> ceil(11.62/4.8)*2 = 6 rails)
-    assert items["Rail 4800m"]["unit_cost"] == mount_map["Rail 4800m"]  # 500.0
+    # Keenoc 4.8m rail calculation asserted directly against raw row[6] extraction:
+    assert items["Rail 4800m"]["unit_cost"] == mount_raw["Rail 4800m"]  # row[6] -> 500.0
     assert items["Rail 4800m"]["quantity"] == 6
 
-    assert items["Rail Splice"]["unit_cost"] == mount_map["Rail Splice"]  # 34.0
+    assert items["Rail Splice"]["unit_cost"] == mount_raw["Rail Splice"]  # row[6] -> 34.0
     assert items["Rail Splice"]["quantity"] == 4
 
-    assert items["Mid Clamp"]["unit_cost"] == mount_map["Mid Clamp"]  # 17.5
+    assert items["Mid Clamp"]["unit_cost"] == mount_raw["Mid Clamp"]  # row[6] -> 17.5
     assert items["Mid Clamp"]["quantity"] == 18
 
-    assert items["End Clamp"]["unit_cost"] == mount_map["End Clamp"]  # 15.0
+    assert items["End Clamp"]["unit_cost"] == mount_raw["End Clamp"]  # row[6] -> 15.0
     assert items["End Clamp"]["quantity"] == 4
 
-    assert items["Grounding Lug"]["unit_cost"] == mount_map["Grounding Lug"]  # 14.5
+    assert items["Grounding Lug"]["unit_cost"] == mount_raw["Grounding Lug"]  # row[6] -> 14.5
     assert items["Grounding Lug"]["quantity"] == 2
 
-    assert items["Earthing Clip"]["unit_cost"] == mount_map["Earthing Clip"]  # 5.0
+    assert items["Earthing Clip"]["unit_cost"] == mount_raw["Earthing Clip"]  # row[6] -> 5.0
     assert items["Earthing Clip"]["quantity"] == 10
 
-    assert items["Cable Clip"]["unit_cost"] == mount_map["Cable Clip"]  # 7.5
+    assert items["Cable Clip"]["unit_cost"] == mount_raw["Cable Clip"]  # row[6] -> 7.5
     assert items["Cable Clip"]["quantity"] == 20
 
-    assert items["L-Feet"]["unit_cost"] == mount_map["L-Feet"]  # 27.5
+    assert items["L-Feet"]["unit_cost"] == mount_raw["L-Feet"]  # row[6] -> 27.5
     assert items["L-Feet"]["quantity"] == 22
 
     # Total cost must equal sum of valid items (excluding missing MW-025025-A)
@@ -127,14 +151,14 @@ def test_golden_case_a_atmoce21_10p_1p(raw_snapshot_data):
     assert res["total_cost"] == 78105.0
 
 
-def test_golden_case_b_atmoce11_8p_1p(raw_snapshot_data):
-    cat, qpkg, inv_map, mount_map, panel_map = raw_snapshot_data
+def test_golden_case_b_atmoce11_8p_1p(raw_fixture_extracts):
+    inv_raw, mount_raw, cable_raw, panel_raw = raw_fixture_extracts
     res = calculate_atmoce_bom_n1(
         panels=8,
         ratio="1:1",
         phase="1P",
-        catalog_data=cat,
-        qpkg_data=qpkg,
+        catalog_data=None,
+        qpkg_data=None,
     )
     assert res["success"] is True
     assert res["ratio"] == "1:1"
@@ -143,20 +167,20 @@ def test_golden_case_b_atmoce11_8p_1p(raw_snapshot_data):
     assert res["phase"] == "1P"
 
     items = {item["part_number"]: item for item in res["items"]}
-    assert items["MI-500"]["unit_cost"] == inv_map["MI-500"]  # 4400.0
+    assert items["MI-500"]["unit_cost"] == inv_raw["MI-500"]  # row[2] -> 4400.0
     assert items["MI-500"]["quantity"] == 8
-    assert items["MC100L"]["unit_cost"] == inv_map["MC100L Warranty 5 year"]  # 10900.0
+    assert items["MC100L"]["unit_cost"] == inv_raw["MC100L Warranty 5 year"]  # row[2] -> 10900.0
     assert items["MC100L"]["quantity"] == 1
 
 
-def test_golden_case_c_atmoce21_20p_3p(raw_snapshot_data):
-    cat, qpkg, inv_map, mount_map, panel_map = raw_snapshot_data
+def test_golden_case_c_atmoce21_20p_3p(raw_fixture_extracts):
+    inv_raw, mount_raw, cable_raw, panel_raw = raw_fixture_extracts
     res = calculate_atmoce_bom_n1(
         panels=20,
         ratio="2:1",
         phase="3P",
-        catalog_data=cat,
-        qpkg_data=qpkg,
+        catalog_data=None,
+        qpkg_data=None,
     )
     assert res["success"] is True
     assert res["ratio"] == "2:1"
@@ -165,33 +189,46 @@ def test_golden_case_c_atmoce21_20p_3p(raw_snapshot_data):
     assert res["phase"] == "3P"
 
     items = {item["part_number"]: item for item in res["items"]}
-    assert items["MC100T"]["unit_cost"] == inv_map["MC100T Warranty 5 year"]  # 20900.0
+    assert items["MC100T"]["unit_cost"] == inv_raw["MC100T Warranty 5 year"]  # row[2] -> 20900.0
     assert items["MC100T"]["quantity"] == 1
-    assert items["MT-03205-A"]["unit_cost"] == inv_map["MT-03205-A"]  # 1050.0
+    assert items["MT-03205-A"]["unit_cost"] == inv_raw["MT-03205-A"]  # row[2] -> 1050.0
     assert items["MT-03205-A"]["quantity"] == 1
 
 
-def test_golden_case_d_atmoce21_12p_battery(raw_snapshot_data):
-    cat, qpkg, inv_map, mount_map, panel_map = raw_snapshot_data
+def test_golden_case_d_atmoce21_12p_battery(raw_fixture_extracts):
+    inv_raw, mount_raw, cable_raw, panel_raw = raw_fixture_extracts
     res = calculate_atmoce_bom_n1(
         panels=12,
         ratio="2:1",
         phase="1P",
         battery_kwh=7,
         backup=True,
-        catalog_data=cat,
-        qpkg_data=qpkg,
+        catalog_data=None,
+        qpkg_data=None,
     )
     assert res["success"] is True
     assert res["inverter_count"] == 6
 
     items = {item["part_number"]: item for item in res["items"]}
-    assert items["MS-7K-U"]["unit_cost"] == inv_map["MS-7K-U Warranty 10 year"]  # 72900.0
-    assert items["MU100S"]["unit_cost"] == inv_map["MU100S Warranty 5 year"]  # 15900.0
+    assert items["MS-7K-U"]["unit_cost"] == inv_raw["MS-7K-U Warranty 10 year"]  # row[2] -> 72900.0
+    assert items["MU100S"]["unit_cost"] == inv_raw["MU100S Warranty 5 year"]  # row[2] -> 15900.0
+
+
+def test_unspecified_ratio_defaults_to_2_1():
+    """Requirement (2): Engine called without ratio parameter MUST default to 2:1 ratio (MI-1250)."""
+    res = calculate_atmoce_bom_n1(
+        panels=10,
+        ratio=None,
+        phase="1P",
+    )
+    assert res["success"] is True
+    assert res["ratio"] == "2:1"
+    assert res["inverter_sku"] == "MI-1250"
+    assert res["inverter_count"] == 5
 
 
 def test_no_api_key_raises_survey_unavailable():
-    # When fixture mode is OFF and no API key is provided, must raise SurveyUnavailable
+    """When fixture mode is OFF and no API key is provided, must raise SurveyUnavailable."""
     old_mode = os.environ.pop("LF_BOM_FIXTURE_MODE", None)
     old_key = os.environ.pop("LF_SURVEY_API_KEY", None)
     try:
@@ -205,7 +242,7 @@ def test_no_api_key_raises_survey_unavailable():
 
 
 def test_production_code_has_no_hardcoded_prices():
-    # Grep assertion check: srp_calculator.py must NOT contain hardcoded prices (4750, 4400, etc.)
+    """Grep assertion check: srp_calculator.py must NOT contain hardcoded prices (4750, 4000, etc.)."""
     calculator_file = pathlib.Path(__file__).parent.parent / "srp_calculator.py"
     content = calculator_file.read_text(encoding="utf-8")
     assert "4_750" not in content
