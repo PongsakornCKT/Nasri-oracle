@@ -3,22 +3,27 @@
 # Usage: bash nasri-line-bot/deploy.sh
 set -euo pipefail
 
-# SECURITY WARNING: This file contains plaintext FTP and Plesk credentials.
-# Risk: Anyone with read access to this file (or the git repo) gains full
-#       server access. Severity: CRITICAL.
-# Recommended remediation:
-#   1. Move credentials to a local secrets file (e.g. ~/.nasri-deploy-secrets)
-#      that is NOT committed to git and load it here with: source ~/.nasri-deploy-secrets
-#   2. Add deploy.sh to .gitignore or replace values with env-var references:
-#      FTP="ftp://${DEPLOY_FTP_USER}:${DEPLOY_FTP_PASS}@thsv86.hostatom.com"
-#      PLESK_PASS="${DEPLOY_PLESK_PASS}"
-#   3. Rotate the FTP password and Plesk password after moving them out.
-# NOTE: Credentials are kept inline for now so the deploy script continues to
-#       work — DO NOT commit further credential changes to git history.
-FTP="ftp://enervia:PyvyTUHF@thsv86.hostatom.com"
+# ── Load secrets from env file (never committed) ──────────────
+SECRETS_FILE="${NASRI_SECRETS_FILE:-/home/po-ch/.nasri-deploy-secrets}"
+if [ ! -f "$SECRETS_FILE" ]; then
+  echo "❌ Secrets file not found: $SECRETS_FILE" >&2
+  echo "   See nasri-line-bot/deploy/README.md for setup." >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$SECRETS_FILE"
+
+REQUIRED_KEYS=(NASRI_FTP_URL NASRI_FTP_USER NASRI_FTP_PASS PLESK_URL PLESK_USER PLESK_PASS)
+for key in "${REQUIRED_KEYS[@]}"; do
+  if [ -z "${!key:-}" ]; then
+    echo "❌ Missing required secret: $key" >&2
+    exit 1
+  fi
+done
+
+FTP="ftp://${NASRI_FTP_USER}:${NASRI_FTP_PASS}@${NASRI_FTP_URL}"
 DEPLOY_DIR="C:/Users/pO-Ch/Nasri-oracle/nasri-line-bot/deploy"
 REPO_ROOT="C:/Users/pO-Ch/Nasri-oracle"
-PLESK="https://thsv86.hostatom.com:8443"
 COOKIES="/tmp/plesk_cookies"
 
 # ── 1. Core app files ──────────────────────────────────────────
@@ -93,15 +98,15 @@ echo "  ✓ Images uploaded"
 
 # ── 5. Plesk restart ──────────────────────────────────────────
 echo "🔄 Logging into Plesk..."
-curl -sk -c "$COOKIES" -L -X POST "$PLESK/login_up.php" \
-  -d "login_name=enervia&passwd=jBj7%5Eq370" > /dev/null 2>&1
+curl -sk -c "$COOKIES" -L -X POST "${PLESK_URL}/login_up.php" \
+  -d "login_name=${PLESK_USER}&passwd=${PLESK_PASS}" > /dev/null 2>&1
 
-CSRF=$(curl -sk -b "$COOKIES" "$PLESK/smb/web/view" 2>&1 | \
+CSRF=$(curl -sk -b "$COOKIES" "${PLESK_URL}/smb/web/view" 2>&1 | \
   grep -oP 'forgery_protection_token" content="[^"]*' | head -1 | sed 's/.*content="//')
 
 echo "🔄 Restarting Node.js app..."
 curl -sk -b "$COOKIES" -X POST \
-  "$PLESK/modules/nodejs/index.php/api/restart-domain" \
+  "${PLESK_URL}/modules/nodejs/index.php/api/restart-domain" \
   -H "X-Forgery-Protection-Token: $CSRF" \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
