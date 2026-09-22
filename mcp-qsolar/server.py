@@ -17,8 +17,16 @@ import re
 import json
 import logging
 import datetime
+import tempfile
 
 logger = logging.getLogger(__name__)
+
+# ─── Preloaded catalog (optional Node → Python handoff via stdin) ───
+# When server.py is invoked as a subprocess with --catalog-stdin (or env
+# QSOLAR_CATALOG_FROM_STDIN=1), the caller streams a JSON blob on stdin:
+#   {"catalog": {"Solar Panels": [...], "Inverters - Sigenergy": [...], ...}}
+# sheets.fetch_sheet() will check this dict before going to disk/network.
+_PRELOADED_CATALOG: dict = {}
 
 # ─── Allowed output directory (path traversal anchor) ────────
 _ALLOWED_OUTPUT_DIR: str | None = None  # set lazily from generate_pdf.OUTPUT_DIR
@@ -28,6 +36,10 @@ def _safe_output_path(requested: str) -> str:
     Validate that a caller-supplied output_path stays inside the allowed
     output directory.  Returns the resolved path if safe, raises ValueError
     otherwise.  An empty string is allowed (caller gets auto-generated path).
+
+    Uses os.path.commonpath for cross-platform correctness (Windows case-insensitive
+    paths, forward/back slash normalization) — previously a naive startswith check
+    could reject legitimate Windows paths or accept relative-path traversal.
     """
     if not requested:
         return requested
@@ -40,8 +52,20 @@ def _safe_output_path(requested: str) -> str:
             _ALLOWED_OUTPUT_DIR = os.path.realpath(
                 os.path.join(os.path.dirname(__file__), '..', 'nasri-line-bot', 'deploy', 'boms')
             )
-    resolved = os.path.realpath(requested)
-    if not resolved.startswith(_ALLOWED_OUTPUT_DIR + os.sep) and resolved != _ALLOWED_OUTPUT_DIR:
+    # Resolve request RELATIVE TO the allowed dir if it's not absolute — prevents
+    # CWD-dependent resolution leaking outside the sandbox
+    if not os.path.isabs(requested):
+        requested_abs = os.path.join(_ALLOWED_OUTPUT_DIR, requested)
+    else:
+        requested_abs = requested
+    resolved = os.path.realpath(requested_abs)
+    # Normalize case for Windows, use commonpath for correct containment check
+    try:
+        common = os.path.commonpath([os.path.normcase(resolved), os.path.normcase(_ALLOWED_OUTPUT_DIR)])
+    except ValueError:
+        # Different drives on Windows
+        raise ValueError(f"output_path '{requested}' is outside the allowed output directory.")
+    if os.path.normcase(common) != os.path.normcase(_ALLOWED_OUTPUT_DIR):
         raise ValueError(
             f"output_path '{requested}' is outside the allowed output directory."
         )
@@ -78,6 +102,39 @@ def _validate_generate_inputs(
     if len(remarks) > 2000:
         raise ValueError(f"remarks too long: {len(remarks)} chars (max 2000)")
 
+# ─── Quote number generator — monotonic daily counter ───────
+# BUG-6 fix: random.randint(1,9999) has ~1%/day collision risk at ~15 quotes/day
+# and grows quadratically. Use an on-disk per-day counter with atomic increment.
+def _next_quote_number(today: datetime.date | None = None) -> str:
+    today = today or datetime.date.today()
+    day_tag = today.strftime('%Y%m%d')
+    counter_dir = tempfile.gettempdir()
+    counter_path = os.path.join(counter_dir, f'.qt-counter-{day_tag}')
+    try:
+        # Read-modify-write. Not SMP-safe across processes, but collisions are
+        # 1-in-9999 worst case (same sub-second spawn) which already beats random.
+        seq = 0
+        if os.path.exists(counter_path):
+            try:
+                with open(counter_path, 'r', encoding='utf-8') as f:
+                    seq = int((f.read() or '0').strip() or '0')
+            except Exception:
+                seq = 0
+        seq += 1
+        if seq > 9999:
+            seq = 1  # wrap — extremely unlikely in one day
+        tmp_path = counter_path + '.tmp'
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(str(seq))
+        os.replace(tmp_path, counter_path)
+        return f'QT{day_tag}{seq:04d}'
+    except Exception:
+        # Fallback: microsecond timestamp (last 4 digits) — unique within 10ms
+        now = datetime.datetime.now()
+        seq = now.microsecond % 10000
+        return f'QT{day_tag}{seq:04d}'
+
+
 # CLI mode detection — skip MCP imports when called as subprocess
 _CLI_MODE = len(sys.argv) > 1
 
@@ -93,12 +150,29 @@ except ImportError:
         def run(self): pass
     mcp = _DummyMCP()
 
-# ─── Lazy import PDF generator (always reload to pick up code changes) ───
+# ─── PDF generator — cached at module load; hot-reload only in dev ───
+# BUG-3 fix: importlib.reload() on every call adds ~400ms cold start in prod.
+# Set QSOLAR_DEV_RELOAD=1 locally to force reload (for iterating on generate_pdf.py).
+try:
+    import generate_pdf as _gp_module  # noqa: E402
+except Exception:  # pragma: no cover — only happens if dependency missing at import time
+    _gp_module = None
+
+
 def _get_generator():
-    import importlib
-    import generate_pdf as _genpdf
-    importlib.reload(_genpdf)
-    return _genpdf.QuotationGenerator, _genpdf.SELLING_PRICES, _genpdf.get_selling_price
+    global _gp_module
+    if os.environ.get('QSOLAR_DEV_RELOAD') == '1':
+        import importlib
+        if _gp_module is None:
+            import generate_pdf as _gp_local  # type: ignore
+            _gp_module = _gp_local
+        else:
+            _gp_module = importlib.reload(_gp_module)
+    elif _gp_module is None:
+        # Lazy import fallback — first call after a failed module-load
+        import generate_pdf as _gp_local  # type: ignore
+        _gp_module = _gp_local
+    return _gp_module.QuotationGenerator, _gp_module.SELLING_PRICES, _gp_module.get_selling_price
 
 
 # ─── Tool: qsolar_generate ───────────────────────────────────
@@ -107,7 +181,7 @@ def qsolar_generate(
     brand: str,
     size_kw: float,
     phase: str,
-    customer_name: str = 'เสนอราคา',
+    customer_name: str = 'ใบเสนอราคา',
     project_name: str = '',
     has_battery: bool = False,
     has_backup: bool = False,
@@ -115,11 +189,15 @@ def qsolar_generate(
     discount: float = 0.0,
     panel_brand: str = '',
     panel_watt: int = 0,
+    panel_count: int = 0,
     remarks: str = '',
     output_path: str = '',
     markup_pct: float = 0.0,
     battery_model: str = '',
     battery_kwh: float = 0.0,
+    lump_sum: bool = False,
+    has_optimizer: bool = False,
+    credit: str = '',
 ) -> dict:
     """
     Generate a professional solar quotation PDF.
@@ -129,7 +207,7 @@ def qsolar_generate(
     brand        : "ATMOCE", "Sigenergy", "Huawei", "Solis", "Deye", or "Hoymiles"
     size_kw      : System size in kW (e.g. 5.0, 10.0)
     phase        : "1P" or "3P"
-    customer_name: Customer / recipient name (default: เสนอราคา)
+    customer_name: Customer / recipient name (default: ใบเสนอราคา)
     project_name : Project name shown in quotation
     has_battery  : Include ATMOCE MS-7K battery (ATMOCE only)
     has_backup   : Include backup system (requires has_battery, ATMOCE only)
@@ -144,6 +222,8 @@ def qsolar_generate(
                    input (cost price). Sheet ราคาขาย prices already include margin — leave at 0.
     battery_kwh  : Requested battery capacity in kWh (e.g. 14.0). Used to select best battery
                    model from Google Sheet for Deye/Solis combos.
+    lump_sum     : When True, item 1 shows the full grand_total as one combined price and the
+                   battery item (if present) is displayed with price = 0 (included in package).
 
     Returns
     -------
@@ -157,14 +237,22 @@ def qsolar_generate(
         QuotationGenerator, SELLING_PRICES, get_selling_price = _get_generator()
         gen = QuotationGenerator()
 
-        import random
         today = datetime.date.today()
-        seq = random.randint(1, 9999)
-        quote_number = f'QT{today.strftime("%Y%m%d")}{seq:04d}'
+        quote_number = _next_quote_number(today)
 
         # grand_total: use override if provided, else auto-calc from live sheet / hardcoded table
         if grand_total <= 0:
-            grand_total = float(gen._calc_grand_total(brand, phase, size_kw, has_battery, has_backup, battery_model, battery_kwh=battery_kwh))
+            # BUG-1 fix: pass panels= and has_optimizer= so Sigenergy optimizer cost is included
+            try:
+                _panels_for_calc = _gp_module.get_panels_count(brand, size_kw, panel_watt) if _gp_module else 0
+            except Exception:
+                _panels_for_calc = 0
+            grand_total = float(gen._calc_grand_total(
+                brand, phase, size_kw, has_battery, has_backup, battery_model,
+                battery_kwh=battery_kwh,
+                panels=_panels_for_calc,
+                has_optimizer=has_optimizer,
+            ))
 
         base_price = grand_total  # price before markup
 
@@ -195,15 +283,22 @@ def qsolar_generate(
             'remarks': remarks_list,
             'markup_pct': markup_pct,
             'base_price': base_price,
+            'lump_sum': lump_sum,
         }
+        if credit:
+            data['credit'] = credit
         if panel_brand:
             data['panel_brand'] = panel_brand
         if panel_watt:
             data['panel_watt'] = panel_watt
+        if panel_count and panel_count > 0:
+            data['panel_count'] = int(panel_count)
         if battery_model:
             data['battery_model'] = battery_model
         if battery_kwh > 0:
             data['battery_kwh'] = battery_kwh
+        if has_optimizer:
+            data['has_optimizer'] = True
 
         pdf_path = gen.generate(data)
 
@@ -219,6 +314,7 @@ def qsolar_generate(
             'quote_number': quote_number,
             'has_battery': has_battery,
             'has_backup': has_backup,
+            'lump_sum': lump_sum,
         }
 
     except ValueError as e:
@@ -302,7 +398,7 @@ def qsolar_list_options() -> dict:
         'phases': ['1P', '3P'],
         'configurations': options,
         'battery_add_ons': battery_options,
-        'note': 'Prices include VAT. ATMOCE size = panels × 625W.',
+        'note': 'Prices include VAT. ATMOCE size = panels × 670W (AIKO default).',
     }
 
 
@@ -310,12 +406,13 @@ def qsolar_list_options() -> dict:
 @mcp.tool()
 def qsolar_from_spec(
     spec: str,
-    customer_name: str = 'เสนอราคา',
+    customer_name: str = 'ใบเสนอราคา',
     project_name: str = '',
     output_path: str = '',
     markup_pct: float = 0.0,
     grand_total: float = 0.0,
     battery_model: str = '',
+    credit: str = '',
 ) -> dict:
     """
     Parse a natural language solar spec and generate a quotation PDF.
@@ -346,6 +443,7 @@ def qsolar_from_spec(
 
     panel_brand = ''
     panel_watt = 0
+    panel_count = 0
     discount_val = 0.0
     remarks_str = ''
 
@@ -364,8 +462,10 @@ def qsolar_from_spec(
     elif re.search(r'atmoce', lo):
         brand = 'ATMOCE'
 
-    # kW detection
+    # kW detection — capture whether user explicitly stated kW, so we don't
+    # overwrite their value with panel_count × panel_watt below (Layer A guard).
     m = re.search(r'([\d.]+)\s*kw', lo)
+    user_explicit_kw = bool(m)
     size_kw = float(m.group(1)) if m else 5.0
 
     # Phase detection
@@ -387,6 +487,9 @@ def qsolar_from_spec(
     if bq and battery_kwh > 0:
         battery_kwh = battery_kwh * int(bq.group(1))
 
+    # Optimizer detection
+    has_optimizer = bool(re.search(r'optim', lo))
+
     # Backup implies battery
     if has_backup:
         has_battery = True
@@ -406,36 +509,69 @@ def qsolar_from_spec(
         if cname:
             customer_name = cname
 
-    # Selling price — "ขาย [number]" or "ขายราคา [number]"
-    price_match = re.search(r'(?:ขาย(?:ราคา)?|ราคาขาย)\s*([\d,]+)', spec)
+    # Selling price — keywords + number
+    # "ขาย/ราคาขาย/ราคารวม/รวม/ราคา/ราคาเดียว/รวมแพ็คเกจ/แพ็คเกจ [number]"
+    price_match = re.search(
+        r'(?:ขาย(?:ราคา)?|ราคาขาย|ราคารวม|รวมแพ็คเกจ|แพ็คเกจ|ราคาเดียว|รวม|ราคา)\s*([\d,]+)',
+        spec
+    )
     if price_match:
         grand_total = float(price_match.group(1).replace(',', ''))
+
+    # Lump sum — ราคาเดียว / รวมแพ็คเกจ / แพ็คเกจ / ราคารวม / รวมราคา
+    lump_sum = bool(re.search(
+        r'ราคาเดียว|รวมแพ็คเกจ|แพ็คเกจ|ราคารวม|รวมราคา',
+        spec, re.IGNORECASE
+    ))
 
     # Discount — "ส่วนลด/ลดราคา/ลด [number]"
     disc_match = re.search(r'(?:ส่วนลด|ลดราคา(?:พิเศษ)?|ลด)\s*([\d,]+)', spec)
     discount_val = float(disc_match.group(1).replace(',', '')) if disc_match else 0.0
 
-    # Panel count — "[N]แผง" → recalculate kW if no explicit kW given
-    panel_match = re.search(r'(\d+)\s*แผ[งง่]', spec)
+    # ── Panel brand + watt — detect FIRST (needed for DC watt calculation) ──
+    # Match patterns: "แผง AIKO670w", "Trina Solar 715w", "longi650w", "JA625"
+    _panel_brands_re = r'(?:aiko|ja(?:\s*solar)?|trina(?:\s*solar)?|longi|jinko|vols)'
+    pm = re.search(r'(?:แผง\s*)?(' + _panel_brands_re + r')\s*(\d{3,4})\s*(?:w|วัตต์)?', lo)
+    if not pm:
+        pm = re.search(r'(\d{3,4})\s*(?:w|วัตต์)?\s*(' + _panel_brands_re + r')', lo)
+        if pm:
+            panel_watt = int(pm.group(1))
+            _pb = pm.group(2).strip()
+        else:
+            pm_brand = re.search(_panel_brands_re, lo)
+            _pb = pm_brand.group(0).strip() if pm_brand else ''
+    else:
+        _pb = pm.group(1).strip()
+        panel_watt = int(pm.group(2))
+
+    # Look up from Google Sheet catalog
+    if _pb:
+        from sheet_prices import find_panel
+        found = find_panel(_pb, panel_watt)
+        if found:
+            panel_brand = found['brand']
+            if panel_watt <= 0:
+                panel_watt = found['watt']
+        else:
+            panel_brand = _pb.title()
+    elif panel_watt > 0:
+        from sheet_prices import find_panel
+        found = find_panel('', panel_watt)
+        if found:
+            panel_brand = found['brand']
+
+    # ── Panel count + DC watt calculation ──
+    # Match: "32แผง", "32 PV", "38pv", "32 panels"
+    # Layer A guard: if user explicitly stated kW, do NOT overwrite — snap logic
+    # in Layer B will enforce inverter-model constraints. The panel array may
+    # still be larger/smaller than the inverter's rated kW (oversize/undersize).
+    panel_match = re.search(r'(\d+)\s*(?:แผ[งง่]|pv|panels?)', spec, re.IGNORECASE)
     if panel_match:
         panel_count = int(panel_match.group(1))
-        # Determine panel watt from spec, default 625
-        pw = 650 if re.search(r'aiko', lo) else 625
-        pm = re.search(r'(?:ja|aiko)\s*(\d{3})', lo)
-        if pm:
-            pw = int(pm.group(1))
-        size_kw = panel_count * pw / 1000
-
-    # Panel brand
-    if re.search(r'aiko', lo):
-        panel_brand = 'AIKO'
-    elif re.search(r'ja\s*(?:solar)?', lo):
-        panel_brand = 'JA Solar'
-
-    # Panel watt from spec (e.g. "JA625", "AIKO650")
-    pwm = re.search(r'(?:ja|aiko)\s*(\d{3})', lo)
-    if pwm:
-        panel_watt = int(pwm.group(1))
+        if panel_count > 0 and panel_count < 400:  # sanity: not a watt value
+            if not user_explicit_kw:
+                pw = panel_watt or 670  # use detected watt, fallback 670 (AIKO default)
+                size_kw = round(panel_count * pw / 1000, 2)
 
     # Remarks — collect promo phrases from spec
     remarks_list = []
@@ -450,6 +586,12 @@ def qsolar_from_spec(
     clean_match = re.search(r'ล้างแผง\s*(\d+)\s*ครั้ง\s*(\d+)\s*ปี', spec)
     if clean_match:
         remarks_list.append(f'ล้างแผงฟรี {clean_match.group(1)} ครั้ง ภายในระยะเวลา {clean_match.group(2)} ปี')
+    # Custom remark: "หมายเหตุ [text]" — any free-form note
+    note_match = re.search(r'หมายเหตุ\s*[:\-]?\s*(.+)', spec, re.IGNORECASE)
+    if note_match:
+        custom_note = note_match.group(1).strip()
+        if custom_note:
+            remarks_list.append(custom_note)
     # Merge with any remarks passed as parameter
     if remarks_list:
         remarks_str = '|'.join(remarks_list)
@@ -470,25 +612,74 @@ def qsolar_from_spec(
         discount=discount_val,
         panel_brand=panel_brand,
         panel_watt=panel_watt,
+        panel_count=panel_count,
         remarks=remarks_str,
+        has_optimizer=has_optimizer,
+        lump_sum=lump_sum,
+        credit=credit,
     )
 
 
 # ─── CLI: direct invocation for LINE bot subprocess ──────────
+def _load_stdin_catalog() -> None:
+    """
+    BUG-10/P1: read a preloaded catalog JSON from stdin.
+    Activated by flag --catalog-stdin in argv or env QSOLAR_CATALOG_FROM_STDIN=1.
+    Expected shape: {"catalog": {"Solar Panels": [...], "Inverters - Huawei": [...], ...}}
+    Sheets are cached in sheets._PRELOADED_CATALOG so fetch_sheet() returns
+    the in-memory copy, skipping disk cache and the network entirely.
+    """
+    try:
+        raw = sys.stdin.read()
+        if not raw.strip():
+            return
+        blob = json.loads(raw)
+        catalog = blob.get('catalog') if isinstance(blob, dict) else None
+        if not isinstance(catalog, dict):
+            return
+        # Push into sheets module so fetch_sheet() sees it
+        try:
+            import sheets as _sheets
+            if not hasattr(_sheets, '_PRELOADED_CATALOG'):
+                _sheets._PRELOADED_CATALOG = {}
+            for k, v in catalog.items():
+                if isinstance(v, list):
+                    _sheets._PRELOADED_CATALOG[k] = v
+            _PRELOADED_CATALOG.update(_sheets._PRELOADED_CATALOG)
+        except Exception:
+            logger.exception('Failed to push stdin catalog into sheets module')
+    except Exception:
+        logger.exception('Failed to parse stdin catalog JSON')
+
+
 def _cli_main():
     """
     Called directly: python server.py '{"tool":"qsolar_from_spec","spec":"atmoce 5kw 1phase"}'
     Prints JSON result to stdout.
+
+    Optional: pass --catalog-stdin to read preloaded catalog JSON from stdin.
     """
     if len(sys.argv) < 2:
         print(json.dumps({'error': 'No arguments provided'}))
         sys.exit(1)
 
+    # Optional stdin catalog handoff — BEFORE any tool dispatch so fetch_sheet sees it
+    argv_tail = sys.argv[1:]
+    want_stdin = '--catalog-stdin' in argv_tail or os.environ.get('QSOLAR_CATALOG_FROM_STDIN') == '1'
+    if '--catalog-stdin' in argv_tail:
+        argv_tail = [a for a in argv_tail if a != '--catalog-stdin']
+    if want_stdin:
+        _load_stdin_catalog()
+
+    if not argv_tail:
+        print(json.dumps({'error': 'No tool payload provided'}))
+        sys.exit(1)
+
     try:
-        payload = json.loads(sys.argv[1])
+        payload = json.loads(argv_tail[0])
     except json.JSONDecodeError:
         # Try treating the argument as a raw spec string
-        payload = {'tool': 'qsolar_from_spec', 'spec': sys.argv[1]}
+        payload = {'tool': 'qsolar_from_spec', 'spec': argv_tail[0]}
 
     tool = payload.pop('tool', 'qsolar_from_spec')
 

@@ -1,21 +1,25 @@
 #!/bin/bash
 # Deploy nasri-line-bot to ai.enervia.co.th
 # Usage: bash nasri-line-bot/deploy.sh
+#
+# Credentials loaded from ~/.nasri-deploy-secrets (NOT committed to git)
+# Create it with:
+#   echo 'DEPLOY_FTP_USER=enervia' > ~/.nasri-deploy-secrets
+#   echo 'DEPLOY_FTP_PASS=your_ftp_password' >> ~/.nasri-deploy-secrets
+#   echo 'DEPLOY_PLESK_PASS=your_plesk_password' >> ~/.nasri-deploy-secrets
+#   chmod 600 ~/.nasri-deploy-secrets
 set -euo pipefail
 
-# SECURITY WARNING: This file contains plaintext FTP and Plesk credentials.
-# Risk: Anyone with read access to this file (or the git repo) gains full
-#       server access. Severity: CRITICAL.
-# Recommended remediation:
-#   1. Move credentials to a local secrets file (e.g. ~/.nasri-deploy-secrets)
-#      that is NOT committed to git and load it here with: source ~/.nasri-deploy-secrets
-#   2. Add deploy.sh to .gitignore or replace values with env-var references:
-#      FTP="ftp://${DEPLOY_FTP_USER}:${DEPLOY_FTP_PASS}@thsv86.hostatom.com"
-#      PLESK_PASS="${DEPLOY_PLESK_PASS}"
-#   3. Rotate the FTP password and Plesk password after moving them out.
-# NOTE: Credentials are kept inline for now so the deploy script continues to
-#       work — DO NOT commit further credential changes to git history.
-FTP="ftp://enervia:PyvyTUHF@thsv86.hostatom.com"
+SECRETS_FILE="${HOME}/.nasri-deploy-secrets"
+if [ -f "$SECRETS_FILE" ]; then
+  source "$SECRETS_FILE"
+else
+  echo "❌ Missing $SECRETS_FILE — create it with FTP/Plesk credentials"
+  echo "   See deploy.sh header for instructions"
+  exit 1
+fi
+
+FTP="ftp://${DEPLOY_FTP_USER}:${DEPLOY_FTP_PASS}@thsv86.hostatom.com"
 DEPLOY_DIR="C:/Users/pO-Ch/Nasri-oracle/nasri-line-bot/deploy"
 REPO_ROOT="C:/Users/pO-Ch/Nasri-oracle"
 PLESK="https://thsv86.hostatom.com:8443"
@@ -83,6 +87,7 @@ for f in \
   "Atmoce 1 phase with backup and batt 7kw.jpg" \
   "Atmoce 3 phase.jpg" "Atmoce 3 phase with batt 7kw.jpg" \
   "Atmoce 3 phase with backup and batt 7kw.jpg" \
+  "Atmoce-system.jpg" "certificate.jpg" \
   "Sigenergy present1.png" "Sigenergy present2.png" \
   "Sigenergy present3.png" "Sigenergy present4.png" \
   "huawei.png" "huawei present.png" \
@@ -94,7 +99,8 @@ echo "  ✓ Images uploaded"
 # ── 5. Plesk restart ──────────────────────────────────────────
 echo "🔄 Logging into Plesk..."
 curl -sk -c "$COOKIES" -L -X POST "$PLESK/login_up.php" \
-  -d "login_name=enervia&passwd=jBj7%5Eq370" > /dev/null 2>&1
+  --data-urlencode "login_name=enervia" \
+  --data-urlencode "passwd=${DEPLOY_PLESK_PASS}" > /dev/null 2>&1
 
 CSRF=$(curl -sk -b "$COOKIES" "$PLESK/smb/web/view" 2>&1 | \
   grep -oP 'forgery_protection_token" content="[^"]*' | head -1 | sed 's/.*content="//')

@@ -9,6 +9,7 @@ Google Sheet: https://docs.google.com/spreadsheets/d/1ubrfga3m0uiOf68MGQRApAdnhU
 """
 
 import os
+import re
 import sys
 import json
 import math
@@ -20,12 +21,14 @@ logger = logging.getLogger(__name__)
 
 # ─── Allowed output directory (path traversal anchor) ─────────
 _ORACLE_ROOT = os.environ.get("ORACLE_REPO_ROOT", "C:/Users/pO-Ch/Nasri-oracle")
+_default_output = os.path.join(_ORACLE_ROOT, "nasri-line-bot", "deploy", "boms")
 _ALLOWED_OUTPUT_DIR = os.path.realpath(
-    os.path.join(_ORACLE_ROOT, "nasri-line-bot", "deploy", "boms")
+    os.environ.get("BOMSOLAR_OUTPUT_DIR", _default_output)
 )
 # Allowed logo directory — only images inside the assets tree
+_default_asset = os.path.join(_ORACLE_ROOT, "tmppic", "tempagent", "quotation-solar", "assets")
 _ALLOWED_ASSET_DIR = os.path.realpath(
-    os.path.join(_ORACLE_ROOT, "tmppic", "tempagent", "quotation-solar", "assets")
+    os.environ.get("BOMSOLAR_ASSET_DIR", _default_asset)
 )
 
 
@@ -116,6 +119,18 @@ except ImportError as e:
     PDF_AVAILABLE = False
     PDF_IMPORT_ERROR = str(e)
 
+try:
+    from scripts.generate_srp_pdf import generate_srp_pdf
+    SRP_PDF_AVAILABLE = True
+except ImportError:
+    SRP_PDF_AVAILABLE = False
+
+try:
+    from srp_calculator import calculate_srp, SRPParams, PRICES_ATMOCE_DEFAULT, srp_result_from_dict
+    SRP_CALC_AVAILABLE = True
+except ImportError:
+    SRP_CALC_AVAILABLE = False
+
 # Google Sheets catalog
 from sheets import fetch_sheet, fetch_all_sheets, search_catalog, get_catalog_summary, SHEETS
 
@@ -192,30 +207,42 @@ def _format_text_summary(bom_data: dict) -> str:
     if cost_summary:
         actual_wp = cost_summary.get("actual_wp", 0)
         kw_str = f"{actual_wp/1000:.2f}kW" if actual_wp else ""
+        labor_rate = cost_summary.get("labor_rate_per_wp", 4.5)
+        utility = cost_summary.get("utility_type", "PEA")
         lines.append("")
         lines.append("💰 Cost Summary")
         lines.append(f"━━━━━━━━━━━━━━━━━━━━")
         lines.append(f"รวมค่าอุปกรณ์: ฿{cost_summary.get('equipment_total', 0):,.2f}")
         lines.append(f"VAT 7%: ฿{cost_summary.get('vat_7pct', 0):,.2f}")
-        labor_label = f"ค่าแรง ({kw_str} × ฿4.5/Wp)" if kw_str else "ค่าแรง"
+        labor_label = f"ค่าแรง ({kw_str} × ฿{labor_rate}/Wp)" if kw_str else "ค่าแรง"
         lines.append(f"{labor_label}: ฿{cost_summary.get('labor', 0):,.2f}")
-        bos_label = f"BOS ({kw_str} × ฿0.7/Wp)" if kw_str else "BOS"
+        bos_label = f"BOS ({kw_str} × ฿2.0/Wp)" if kw_str else "BOS"
         lines.append(f"{bos_label}: ฿{cost_summary.get('bos', 0):,.2f}")
-        err_label = f"Error Cost ({kw_str} × ฿1.0/Wp)" if kw_str else "Error Cost"
+        err_label = f"Contingency ({kw_str} × ฿0.5/Wp)" if kw_str else "Contingency"
         lines.append(f"{err_label}: ฿{cost_summary.get('error_cost', 0):,.2f}")
         crane = cost_summary.get("crane", 0)
         if crane > 0:
             lines.append(f"ค่าเครน: ฿{crane:,.2f}")
-        lines.append(f"ค่าขอขนาน PEA/MEA: ฿{cost_summary.get('pea_mea_fee', 0):,.2f}")
+        lines.append(f"ค่าขอขนาน {utility}: ฿{cost_summary.get('pea_mea_fee', 0):,.2f}")
+        transport = cost_summary.get("transport", 0)
+        if transport > 0:
+            lines.append(f"ค่าขนส่ง: ฿{transport:,.2f}")
+        sld = cost_summary.get("sld_fee", 0)
+        if sld > 0:
+            lines.append(f"ค่า SLD Design: ฿{sld:,.2f}")
         lines.append(f"━━━━━━━━━━━━━━━━━━━━")
         lines.append(f"🔸 Grand Total: ฿{cost_summary.get('grand_total', 0):,.2f}")
 
     return "\n".join(lines)
 
 
-def _find_best_battery(inv_brand: str, batt_kwh_requested: float, batt_rows: list, _price_fn, _field_fn, phase: str = "1P") -> dict | None:
+def _find_best_battery(inv_brand: str, batt_kwh_requested: float, batt_rows: list, _price_fn, _field_fn, phase: str = "1P", forced_qty: int = 0) -> dict | None:
     """
     Find the best battery model × quantity combo from catalog.
+
+    Args:
+        forced_qty: When > 0, override calculated quantity with this value (e.g. user says "5ลูก").
+                    batt_kwh_requested is then treated as the desired kWh per unit (ceiling selection).
 
     Returns dict with: model, brand, kwh_per_unit, quantity, unit_price, total_price, total_kwh, accessories
     Or None if no compatible battery found.
@@ -267,6 +294,43 @@ def _find_best_battery(inv_brand: str, batt_kwh_requested: float, batt_rows: lis
     # If no specific kWh requested, pick smallest compatible battery × 1
     if not batt_kwh_requested or batt_kwh_requested <= 0:
         best = min(candidates, key=lambda c: c["kwh_per_unit"])
+        qty = forced_qty if forced_qty > 0 else 1
+        return {
+            **best,
+            "quantity": qty,
+            "total_price": best["unit_price"] * qty,
+            "total_kwh": best["kwh_per_unit"] * qty,
+        }
+
+    # When forced_qty is given, batt_kwh_requested is per-unit size.
+    # Select model with kwh_per_unit >= batt_kwh_requested (ceiling rule).
+    # This ensures "9kWh 5ลูก" → BAT 10.0 × 5, not BAT 6.0 × 5.
+    if forced_qty > 0:
+        ceiling = [c for c in candidates if c["kwh_per_unit"] >= batt_kwh_requested]
+        if ceiling:
+            # Pick smallest model that still meets the per-unit request (e.g. 10.0 not 20.0)
+            best = min(ceiling, key=lambda c: c["kwh_per_unit"])
+        else:
+            # No model meets the ceiling — fall back to largest available
+            best = max(candidates, key=lambda c: c["kwh_per_unit"])
+        qty = forced_qty
+        return {
+            **best,
+            "quantity": qty,
+            "total_price": best["unit_price"] * qty,
+            "total_kwh": best["kwh_per_unit"] * qty,
+        }
+
+    # Find best model × quantity combo closest to requested kWh.
+    # For Sigenergy (discrete sizes: 6.0 / 10.0), use ceiling rule:
+    # pick the smallest model whose kwh_per_unit >= batt_kwh_requested, qty=1.
+    # This ensures "9kWh" → BAT 10.0 × 1, not BAT 6.0 × 2.
+    if inv_brand == "Sigenergy":
+        ceiling = [c for c in candidates if c["kwh_per_unit"] >= batt_kwh_requested]
+        if ceiling:
+            best = min(ceiling, key=lambda c: c["kwh_per_unit"])
+        else:
+            best = max(candidates, key=lambda c: c["kwh_per_unit"])
         return {
             **best,
             "quantity": 1,
@@ -274,38 +338,31 @@ def _find_best_battery(inv_brand: str, batt_kwh_requested: float, batt_rows: lis
             "total_kwh": best["kwh_per_unit"],
         }
 
-    # Find best model × quantity combo closest to requested kWh
-    # Strategy: prefer LARGER batteries — among combos within 2kWh of best diff,
-    # pick the one with largest kwh_per_unit (fewer units, simpler install)
+    # Pick combo with smallest |diff| to requested kWh.
+    # On tie, prefer larger kwh_per_unit (fewer units, simpler install).
+    import math
     combos = []
     for c in candidates:
         kwh = c["kwh_per_unit"]
-        raw_qty = batt_kwh_requested / kwh
-        qty_low = max(1, int(raw_qty))
-        qty_high = qty_low + 1
-        diff_low = abs(qty_low * kwh - batt_kwh_requested)
-        diff_high = abs(qty_high * kwh - batt_kwh_requested)
-        qty = qty_low if diff_low <= diff_high else qty_high
-        total_kwh = kwh * qty
-        diff = abs(total_kwh - batt_kwh_requested)
-        combos.append({
-            **c,
-            "quantity": qty,
-            "total_price": c["unit_price"] * qty,
-            "total_kwh": total_kwh,
-            "_diff": diff,
-        })
+        qty_floor = max(1, int(batt_kwh_requested / kwh))
+        qty_ceil = max(1, math.ceil(batt_kwh_requested / kwh))
+        for qty in set([qty_floor, qty_ceil]):
+            total_kwh = kwh * qty
+            diff = abs(total_kwh - batt_kwh_requested)
+            combos.append({
+                **c,
+                "quantity": qty,
+                "total_price": c["unit_price"] * qty,
+                "total_kwh": total_kwh,
+                "_diff": diff,
+            })
 
     if not combos:
         return None
 
-    # Sort: primary by diff, secondary by larger kwh_per_unit (prefer bigger)
-    best_diff = min(cb["_diff"] for cb in combos)
-    # Tolerance: max(2kWh, 20% of requested) — prefer larger but not at cost of accuracy
-    tolerance = max(2, batt_kwh_requested * 0.2)
-    near_best = [cb for cb in combos if cb["_diff"] <= best_diff + tolerance]
-    near_best.sort(key=lambda cb: cb["kwh_per_unit"], reverse=True)
-    winner = near_best[0]
+    # Sort: smallest diff first, then prefer larger kwh_per_unit (fewer units)
+    combos.sort(key=lambda cb: (cb["_diff"], -cb["kwh_per_unit"]))
+    winner = combos[0]
     del winner["_diff"]
 
     # ── Brand-specific post-processing ──
@@ -382,9 +439,20 @@ def bomsolar_generate_pdf(
             "error": f"reportlab not installed. Run: pip install reportlab pillow. Details: {PDF_IMPORT_ERROR}"
         }
 
+    # ── Input validation: path traversal guards ───────────────
+    try:
+        safe_output = _safe_output_path(output_path)
+        safe_logo   = _safe_logo_path(logo_path)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    # ── Items count guard (DoS) ───────────────────────────────
+    if len(items) > 500:
+        return {"success": False, "error": f"Too many items: {len(items)} (max 500)"}
+
     input_data = dict(project_name=project_name, project_address=project_address,
                       order_date=order_date, items=items, company_name=company_name,
-                      notes=notes, logo_path=logo_path)
+                      notes=notes, logo_path=safe_logo)
     input_tokens = _estimate_tokens(input_data)
 
     bom_data = {
@@ -402,11 +470,22 @@ def bomsolar_generate_pdf(
     text_summary = _format_text_summary(bom_data)
 
     try:
-        result_path = generate_bom_pdf(
-            bom_data,
-            output_path,
-            logo_path=logo_path if logo_path else None
-        )
+        cs = bom_data.get("cost_summary") or {}
+        if cs.get("srp_config") and SRP_PDF_AVAILABLE and SRP_CALC_AVAILABLE:
+            # ── SRP path: reconstruct SRPResult → generate_srp_pdf ──
+            srp_obj = srp_result_from_dict(cs, items)
+            result_path = generate_srp_pdf(
+                srp_obj, safe_output,
+                project_name=project_name,
+                project_address=project_address,
+                logo_path=safe_logo if safe_logo else None,
+            )
+        else:
+            result_path = generate_bom_pdf(
+                bom_data,
+                safe_output,
+                logo_path=safe_logo if safe_logo else None,
+            )
         result = {
             "success": True,
             "output_path": result_path,
@@ -414,7 +493,8 @@ def bomsolar_generate_pdf(
             "text_summary": text_summary,
         }
     except Exception as e:
-        result = {"success": False, "error": str(e), "text_summary": text_summary}
+        logger.exception("bomsolar_generate_pdf failed")
+        result = {"success": False, "error": "PDF generation failed. See server logs.", "text_summary": text_summary}
 
     output_tokens = _estimate_tokens(result)
     _log_token_usage("bomsolar_generate_pdf", input_tokens, output_tokens)
@@ -559,16 +639,23 @@ def bomsolar_create_from_line(
 
     # Optionally generate PDF
     if generate_pdf:
-        if not output_path:
-            slug = project_name.lower().replace(" ", "-")[:40]
-            output_path = f"/tmp/bom-{slug}-{int(datetime.now().timestamp())}.pdf"
-        if PDF_AVAILABLE:
+        try:
+            if not output_path:
+                os.makedirs(_ALLOWED_OUTPUT_DIR, exist_ok=True)
+                slug = re.sub(r'[^a-z0-9\-]', '', project_name.lower().replace(" ", "-"))[:40]
+                output_path = os.path.join(_ALLOWED_OUTPUT_DIR, f"bom-{slug}-{int(datetime.now().timestamp())}.pdf")
+            safe_output = _safe_output_path(output_path)
+        except ValueError as e:
+            result["pdf_error"] = str(e)
+            safe_output = None
+        if safe_output and PDF_AVAILABLE:
             try:
-                generate_bom_pdf(bom_data, output_path)
-                result["pdf_path"] = output_path
+                generate_bom_pdf(bom_data, safe_output)
+                result["pdf_path"] = safe_output
             except Exception as e:
-                result["pdf_error"] = str(e)
-        else:
+                logger.exception("bomsolar_create_from_line PDF failed")
+                result["pdf_error"] = "PDF generation failed. See server logs."
+        elif safe_output:
             result["pdf_error"] = f"reportlab not installed: {PDF_IMPORT_ERROR}"
 
     # Auto-record to Oracle
@@ -612,6 +699,7 @@ def bomsolar_smart_bom(
     project_address: str = "",
     generate_pdf: bool = False,
     output_path: str = "",
+    utility_type: str = "PEA",
 ) -> dict:
     """
     Build a BOM automatically from a natural language solar system specification.
@@ -667,22 +755,24 @@ def bomsolar_smart_bom(
             inv_brand = "Sigenergy"
             inv_sheet = "Inverters - Sigenergy"
 
-        # Detect panel
+        # Detect panel brand + watt
+        # Patterns: "aiko670", "aiko 670w", "แผง trina715", "longi 625w", "ja solar 625"
         panel_brand = ""
         panel_watts = 0
-        if m := re.search(r"ja\s*(?:solar)?\s*(\d{3})?", lo):
-            panel_brand = "JA Solar"
-            panel_watts = int(m.group(1)) if m.group(1) else 625
-        elif m := re.search(r"trina\s*(\d{3})?", lo):
-            panel_brand = "Trina"
-            panel_watts = int(m.group(1)) if m.group(1) else 625
-        elif m := re.search(r"aiko\s*(\d{3})?", lo):
-            panel_brand = "AIKO"
-            panel_watts = int(m.group(1)) if m.group(1) else 650
-        elif "vols" in lo:
-            panel_brand = "VOLS"
-            panel_watts = 625
-        elif m := re.search(r"แผง\s*(\d{3})", lo):
+        _panel_re = r"(?:แผง\s*)?(?P<brand>aiko|ja\s*solar|trina(?:\s*solar)?|longi|jinko|vols)\s*(?P<watt>\d{3,4})?\s*(?:w|วัตต์)?"
+        _panel_re2 = r"(?P<watt2>\d{3,4})\s*(?:w|วัตต์)?\s*(?P<brand2>aiko|ja\s*solar|trina(?:\s*solar)?|longi|jinko|vols)"
+        pm_match = re.search(_panel_re, lo) or re.search(_panel_re2, lo)
+        if pm_match:
+            _pb = (pm_match.group("brand") or pm_match.group("brand2") or "").strip()
+            _pw = pm_match.group("watt") or pm_match.group("watt2") or ""
+            _brand_map = {
+                "aiko": ("AIKO", 670), "ja solar": ("JA Solar", 625), "ja": ("JA Solar", 625),
+                "trina": ("Trina Solar", 715), "trina solar": ("Trina Solar", 715),
+                "longi": ("LONGi", 625), "jinko": ("JINKO", 625), "vols": ("VOLS", 625),
+            }
+            panel_brand, _default_pw = _brand_map.get(_pb, (_pb.title(), 625))
+            panel_watts = int(_pw) if _pw else _default_pw
+        elif m := re.search(r"แผง\s*(\d{3,4})", lo):
             panel_watts = int(m.group(1))
 
         want_batt = bool(re.search(r"batt|แบต|แบท", lo))
@@ -691,8 +781,27 @@ def bomsolar_smart_bom(
             batt_kwh = int(m.group(1))
         elif m := re.search(r"(\d+)\s*(?:kw|kwh)\s*(?:batt|แบต|แบท)", lo):
             batt_kwh = int(m.group(1))
+        # Parse explicit battery unit count: "5ลูก" / "5 ลูก" / "5ก้อน" / "x6ลูก" / "x 6ลูก"
+        batt_qty = 0
+        if m := re.search(r"x\s*(\d+)\s*(?:ลูก|ก้อน|units?)", lo):
+            batt_qty = int(m.group(1))
+        elif m := re.search(r"(?:batt|แบต|แบท).*?(\d+)\s*(?:ลูก|ก้อน|units?)", lo):
+            batt_qty = int(m.group(1))
+        elif m := re.search(r"(\d+)\s*(?:ลูก|ก้อน|units?)", lo):
+            batt_qty = int(m.group(1))
         want_backup = bool(re.search(r"backup|สำรอง", lo))
         want_ev = bool(re.search(r"dc\s*charg|ev\s*charg|ชาร์จ", lo))
+
+        # Parse explicit panel count (e.g. "42แผง", "42 แผง", "12panels")
+        explicit_panel_qty = 0
+        if m := re.search(r"(\d+)\s*แผง", lo):
+            val = int(m.group(1))
+            if 0 < val < 400:  # Only treat as count, not watts (400+)
+                explicit_panel_qty = val
+        elif m := re.search(r"(\d+)\s*panels?", lo, re.IGNORECASE):
+            val = int(m.group(1))
+            if 0 < val < 400:
+                explicit_panel_qty = val
 
         # Detect roof type (default: เมทัลชีท → L-Feet 8cm)
         if re.search(r"tile|กระเบื้อง", lo):
@@ -839,39 +948,93 @@ def bomsolar_smart_bom(
             return best_single or best_mix or []
 
         # Find inverter
+        srp_mode = False  # True when ATMOCE SRP calculator path is used
+        srp_result = None
         if inv_brand and inv_sheet:
             inv_rows = all_data.get(inv_sheet, [])
-            if inv_brand == "ATMOCE":
-                # Detect C&I: ≥30kW or explicit C&I keyword
-                is_ci = system_kw >= 30 or bool(re.search(r"c&i|c\si|commercial|โรงงาน", lo))
-                if is_ci:
-                    # C&I: MI-1250 (1.25kW each)
-                    mi = next((r for r in inv_rows if "MI-1250" in " ".join(r.values()) and "warranty" in " ".join(r.values()).lower()), None)
-                    if not mi:
-                        mi = next((r for r in inv_rows if "MI-1250" in " ".join(r.values())), None)
-                    mi_model = "MI-1250"
-                    mi_name = "Micro Inverter MI-1250 (1.25kW)"
-                    mi_kw = 1.25
-                    mi_fallback_price = 4750
-                    qty = math.ceil(system_kw / mi_kw)
-                else:
-                    # Residential default: MI-500 (0.5kW each)
-                    mi = next((r for r in inv_rows if "MI-500" in " ".join(r.values()) and "warranty" in " ".join(r.values()).lower()), None)
-                    if not mi:
-                        mi = next((r for r in inv_rows if "MI-500" in " ".join(r.values())), None)
-                    mi_model = "MI-500"
-                    mi_name = "Micro Inverter MI-500 (0.5kW)"
-                    mi_kw = 0.5
-                    mi_fallback_price = 4400
-                    qty = math.ceil(system_kw / mi_kw)
-                p = _price(mi) if mi else mi_fallback_price
-                items.append({"part_number": mi_model, "part_name": mi_name, "manufacturer": "ATMOCE", "category": "อินเวอร์เตอร์", "quantity": qty, "unit_cost": p, "total_cost": qty * p, "notes": ""})
-                # Combiner
-                comb_key = "MC100T" if phase == "3P" else "MC100"
-                comb = next((r for r in inv_rows if comb_key in " ".join(r.values()) and "Wye" not in " ".join(r.values()) and "Lite" not in " ".join(r.values())), None)
-                if comb:
-                    cp = _price(comb)
-                    items.append({"part_number": comb_key, "part_name": f"{comb_key} M-Combiner", "manufacturer": "ATMOCE", "category": "general", "quantity": 1, "unit_cost": cp, "total_cost": cp, "notes": ""})
+            if inv_brand == "ATMOCE" and SRP_CALC_AVAILABLE:
+                # ── SRP Calculator path (wired Apr 2026) ──────────────────
+                # Replaces manual MI-500/1250 + MC100 build with calculate_srp()
+                # which mirrors the SRP Calculation sheet formulas exactly.
+                force_mi1250 = bool(re.search(r"mi[\-\s]*1250|2:1|2to1", lo))
+                config_ratio = "2:1" if force_mi1250 else "1:1"
+                config = f"{config_ratio}-{phase}"
+
+                # Panel count: explicit > kW-derived (670Wp default)
+                panels = explicit_panel_qty if explicit_panel_qty > 0 else max(1, round(system_kw * 1000 / 670))
+
+                # Build prices from catalog; fall back to PRICES_ATMOCE_DEFAULT
+                catalog_prices = dict(PRICES_ATMOCE_DEFAULT)
+                _price_keys = [
+                    "MI-500", "MI-1250", "MC100L", "MC100", "MC100T",
+                    "MC100-Wye-4in1", "MC100-Wye-8in1",
+                    "MW-025013-A", "MW-025020-B0", "MT-04003-A",
+                    "MT-03205-A", "MT-03505-A", "MT-04002-2in1", "MA-CAP-003",
+                    "MS-7K-U", "MU100S", "MU100T",
+                    "MA-ESSKits-S", "MA-ESSKits-T",
+                    "MI-1250-P5", "MI-1250-P10",
+                    "MG100-Wye", "MA-CT-400A-T", "MA-CT-250A-T",
+                ]
+                for key in _price_keys:
+                    for r in inv_rows:
+                        # Exact word match — "MC100" must not match "MC100L"
+                        vals = " ".join(r.values())
+                        if key in vals.split() or any(v.strip() == key for v in r.values()):
+                            p = _price(r)
+                            if p > 0:
+                                catalog_prices[key] = p
+                                break
+                # MWX-040030-B comes in 30-cable rolls; price per cable
+                for r in inv_rows:
+                    if "MWX-040030" in " ".join(r.values()):
+                        p = _price(r)
+                        if p > 0:
+                            catalog_prices["MWX-040030-B/30"] = p / 30
+                        break
+
+                # Derive battery_kwh from want_batt signal
+                _srp_batt_kwh = 0
+                if want_batt:
+                    _srp_batt_kwh = batt_kwh if batt_kwh > 0 else (batt_qty * 7 if batt_qty > 0 else 7)
+                    want_batt = False
+                _srp_backup = want_backup
+                if want_backup:
+                    want_backup = False
+
+                srp_result = calculate_srp(
+                    config, panels, catalog_prices,
+                    battery_kwh=_srp_batt_kwh,
+                    backup=_srp_backup,
+                )
+                srp_mode = True
+
+                for line in srp_result.lines:
+                    items.append({
+                        "part_number": line.part_number,
+                        "part_name": line.part_name,
+                        "manufacturer": line.manufacturer,
+                        "category": line.category,
+                        "quantity": line.quantity,
+                        "unit_cost": line.unit_cost,
+                        "total_cost": line.total_cost,
+                        "notes": line.notes,
+                    })
+
+                logger.info(
+                    "[srp_wire] config=%s panels=%d batt=%dkWh backup=%s offer_price=%s",
+                    config, panels, _srp_batt_kwh, _srp_backup, srp_result.offer_price,
+                )
+
+            elif inv_brand == "ATMOCE":
+                # Fallback if srp_calculator not importable (should not happen in prod)
+                force_mi1250 = bool(re.search(r"mi[\-\s]*1250", lo))
+                mi_model = "MI-1250" if force_mi1250 else "MI-500"
+                mi_kw = 1.25 if force_mi1250 else 0.5
+                mi_fallback = 4750 if force_mi1250 else 4400
+                mi = next((r for r in inv_rows if mi_model in " ".join(r.values())), None)
+                qty = math.ceil(system_kw / mi_kw)
+                p = _price(mi) if mi else mi_fallback
+                items.append({"part_number": mi_model, "part_name": f"Micro Inverter {mi_model}", "manufacturer": "ATMOCE", "category": "อินเวอร์เตอร์", "quantity": qty, "unit_cost": p, "total_cost": qty * p, "notes": "srp_calculator unavailable"})
                 if want_batt:
                     ab = next((r for r in inv_rows if "MS-7K" in " ".join(r.values())), None)
                     if ab:
@@ -1037,35 +1200,41 @@ def bomsolar_smart_bom(
                     ps_name = (_field(ps_row, ["รุ่น", "model"]) if ps_row else "") or "Power Sensor 3P"
                 items.append({"part_number": "HW-PS", "part_name": ps_name, "manufacturer": "Huawei", "category": "general", "quantity": 1, "unit_cost": ps_price, "total_cost": ps_price, "notes": ""})
 
-        # Find panels — Sigenergy default: AIKO 650W (not JA Solar 625W)
+        # Find panels — skipped for ATMOCE SRP mode (panel cost baked into SRP calc)
+        if srp_mode:
+            panel_qty = srp_result.panels if srp_result else 0
+            panel_watts = 670
+        # Sigenergy default: AIKO 650W (not JA Solar 625W)
         if not panel_watts:
             panel_watts = 650 if inv_brand == "Sigenergy" else 625
         if not panel_brand:
             panel_brand = "AIKO" if inv_brand == "Sigenergy" else "JA Solar"
-        panel_qty = max(1, round((system_kw * 1000) / panel_watts))
+        if not srp_mode:
+            panel_qty = explicit_panel_qty if explicit_panel_qty > 0 else max(1, round((system_kw * 1000) / panel_watts))
         panel_rows = all_data.get("Solar Panels", [])
         best_panel, best_pdiff = None, 9999
-        for r in panel_rows:
-            vals = " ".join(r.values()).lower()
-            if panel_brand and panel_brand.lower() not in vals: continue
-            for v in r.values():
-                try:
-                    w = int(v)
-                    if 400 <= w <= 900:
-                        d = abs(w - panel_watts)
-                        if d < best_pdiff:
-                            best_pdiff = d
-                            best_panel = r
-                except: pass
-        if best_panel:
-            pp = _price(best_panel)
-            pm = _field(best_panel, ["รุ่น", "model"]) or f"{panel_brand} {panel_watts}W"
-            pb = list(best_panel.values())[0] if best_panel else panel_brand
-            pw = _field(best_panel, ["กำลังไฟ"]) or str(panel_watts)
-            items.append({"part_number": pm, "part_name": f"{pm} ({pw}W)", "manufacturer": pb, "category": "โมดูล", "quantity": panel_qty, "unit_cost": pp, "total_cost": panel_qty * pp, "notes": ""})
+        if not srp_mode:
+            for r in panel_rows:
+                vals = " ".join(r.values()).lower()
+                if panel_brand and panel_brand.lower() not in vals: continue
+                for v in r.values():
+                    try:
+                        w = int(v)
+                        if 400 <= w <= 900:
+                            d = abs(w - panel_watts)
+                            if d < best_pdiff:
+                                best_pdiff = d
+                                best_panel = r
+                    except: pass
+            if best_panel:
+                pp = _price(best_panel)
+                pm = _field(best_panel, ["รุ่น", "model"]) or f"{panel_brand} {panel_watts}W"
+                pb = list(best_panel.values())[0] if best_panel else panel_brand
+                pw = _field(best_panel, ["กำลังไฟ"]) or str(panel_watts)
+                items.append({"part_number": pm, "part_name": f"{pm} ({pw}W)", "manufacturer": pb, "category": "โมดูล", "quantity": panel_qty, "unit_cost": pp, "total_cost": panel_qty * pp, "notes": ""})
 
-        # --- Keenoc mounting auto-add ---
-        keenoc_rows = all_data.get("Mounting - Keenoc", [])
+        # --- Keenoc mounting + cables (skipped for ATMOCE SRP mode — those items are in SRP lines) ---
+        keenoc_rows = all_data.get("Mounting - Keenoc", []) if not srp_mode else []
 
         def _keenoc_price(row):
             # Keenoc sheet uses "ราคา ≥50K" column — try that first
@@ -1181,8 +1350,8 @@ def bomsolar_smart_bom(
             ccl_qty = panel_qty * 5
             items.append({"part_number": "CABLE-CLIP", "part_name": "Cable Clip", "manufacturer": "Keenoc", "category": "mounting_other", "quantity": ccl_qty, "unit_cost": 0, "total_cost": 0, "notes": "5 per panel — price TBC"})
 
-        # --- Cables auto-add ---
-        cable_rows = all_data.get("Cables", [])
+        # --- Cables auto-add (skipped for ATMOCE SRP mode) ---
+        cable_rows = all_data.get("Cables", []) if not srp_mode else []
 
         def _cable_search(keyword):
             for r in cable_rows:
@@ -1245,7 +1414,7 @@ def bomsolar_smart_bom(
         # Battery (smart matching by brand compatibility + optimal quantity)
         if want_batt:
             batt_rows = all_data.get("Batteries", [])
-            best_batt = _find_best_battery(inv_brand, batt_kwh, batt_rows, _price, _field, phase=phase)
+            best_batt = _find_best_battery(inv_brand, batt_kwh, batt_rows, _price, _field, phase=phase, forced_qty=batt_qty)
             if best_batt:
                 items.append({
                     "part_number": best_batt["model"],
@@ -1311,40 +1480,92 @@ def bomsolar_smart_bom(
 
         total_cost = sum(i["total_cost"] for i in items)
 
-        # --- Financial cost summary ---
-        # Use actual Wp from panels (qty × watts) instead of nominal system kW
-        actual_wp = panel_qty * panel_watts if panel_qty and panel_watts else system_kw * 1000
-        equipment_total = total_cost
-        labor = actual_wp * 4.5
-        bos = actual_wp * 0.7
-        error_cost = actual_wp * 1.0
-        crane = 15000 if system_kw >= 30 else 0
-        vat = equipment_total * 0.07
+        if srp_mode and srp_result:
+            # ── SRP cost summary: use offer_price from calculator (Profit + VAT already included) ──
+            cost_summary = {
+                "equipment_total": srp_result.total_cost,
+                "profit_30pct": round(srp_result.profit, 2),
+                "vat_7pct": round(srp_result.vat, 2),
+                "grand_total": float(srp_result.offer_price),
+                "srp_config": srp_result.config,
+                "srp_panels": srp_result.panels,
+                "srp_kwp": srp_result.kwp,
+                "note": "SRP Calculation sheet formula — offer_price includes 30% profit + 7% VAT",
+            }
+            grand_total = float(srp_result.offer_price)
+        else:
+            # --- Financial cost summary (non-ATMOCE path) ---
+            actual_wp = panel_qty * panel_watts if panel_qty and panel_watts else system_kw * 1000
+            equipment_total = total_cost
+            vat = equipment_total * 0.07
 
-        pea_fee_table = [
-            (10, 6000), (20, 8500), (30, 12500), (40, 15500),
-            (100, 21500), (200, 24000), (500, 36000), (1000, 46000),
-        ]
-        pea_fee = 46000  # fallback for >1000kW
-        for max_kw, fee in pea_fee_table:
-            if system_kw <= max_kw:
-                pea_fee = fee
-                break
+            if system_kw <= 10:
+                labor_rate = 5.0
+            elif system_kw <= 50:
+                labor_rate = 4.5
+            elif system_kw <= 200:
+                labor_rate = 4.0
+            else:
+                labor_rate = 3.5
+            labor = actual_wp * labor_rate
 
-        grand_total = equipment_total + vat + labor + bos + error_cost + crane + pea_fee
-        actual_kw = actual_wp / 1000
+            bos = actual_wp * 2.0
+            error_cost = actual_wp * 0.5
+            crane = 15000 if system_kw >= 30 else 0
 
-        cost_summary = {
-            "equipment_total": equipment_total,
-            "vat_7pct": round(vat, 2),
-            "labor": labor,
-            "bos": bos,
-            "error_cost": error_cost,
-            "crane": crane,
-            "pea_mea_fee": pea_fee,
-            "grand_total": round(grand_total, 2),
-            "actual_wp": actual_wp,
-        }
+            _pea_fee_table = [(10, 7_000), (20, 15_000), (40, 25_000), (100, 50_000), (250, 100_000)]
+            _mea_fee_table = [(10, 10_000), (40, 25_000)]
+
+            utility = (utility_type or "PEA").upper()
+            if utility == "MEA":
+                fee_table = _mea_fee_table
+                fee_fallback = 70_000
+            else:
+                fee_table = _pea_fee_table
+                fee_fallback = 200_000
+                utility = "PEA"
+
+            pea_fee = fee_fallback
+            for max_kw, fee in fee_table:
+                if system_kw <= max_kw:
+                    pea_fee = fee
+                    break
+
+            if system_kw <= 10:
+                transport_cost = 3_000
+            elif system_kw <= 50:
+                transport_cost = 5_000
+            elif system_kw <= 200:
+                transport_cost = 8_000
+            else:
+                transport_cost = 15_000
+
+            if system_kw <= 30:
+                sld_fee = 3_000
+            elif system_kw <= 100:
+                sld_fee = 5_000
+            else:
+                sld_fee = 8_000
+
+            grand_total = (equipment_total + vat + labor + bos + error_cost
+                           + crane + pea_fee + transport_cost + sld_fee)
+
+            cost_summary = {
+                "equipment_total": equipment_total,
+                "vat_7pct": round(vat, 2),
+                "labor": round(labor, 2),
+                "labor_rate_per_wp": labor_rate,
+                "bos": round(bos, 2),
+                "error_cost": round(error_cost, 2),
+                "crane": crane,
+                "utility_type": utility,
+                "pea_mea_fee": pea_fee,
+                "transport": transport_cost,
+                "sld_fee": sld_fee,
+                "grand_total": round(grand_total, 2),
+                "actual_wp": actual_wp,
+            }
+
         bom_data = {
             "company_name": "Enervia Group co.,ltd",
             "project_name": project_name or f"Solar {system_kw}kW {inv_brand}",
@@ -1358,15 +1579,28 @@ def bomsolar_smart_bom(
         result = {"success": True, "spec": spec, "bom_data": bom_data, "item_count": len(items), "total_cost": total_cost, "cost_summary": cost_summary, "text_summary": text_summary}
 
         if generate_pdf and items:
-            if not output_path:
-                slug = (project_name or inv_brand).lower().replace(" ", "-")[:40]
-                output_path = f"/tmp/bom-{slug}-{int(datetime.now().timestamp())}.pdf"
-            if PDF_AVAILABLE:
+            try:
+                if not output_path:
+                    os.makedirs(_ALLOWED_OUTPUT_DIR, exist_ok=True)
+                    raw_slug = (project_name or inv_brand).lower().replace(" ", "-")
+                    slug = re.sub(r'[^a-z0-9\-]', '', raw_slug)[:40]
+                    output_path = os.path.join(_ALLOWED_OUTPUT_DIR, f"bom-{slug}-{int(datetime.now().timestamp())}.pdf")
+                safe_output = _safe_output_path(output_path)
+            except ValueError as e:
+                result["pdf_error"] = str(e)
+                safe_output = None
+            if safe_output:
                 try:
-                    generate_bom_pdf(bom_data, output_path)
-                    result["pdf_path"] = output_path
+                    if srp_mode and srp_result and SRP_PDF_AVAILABLE:
+                        generate_srp_pdf(srp_result, safe_output,
+                                         project_name=project_name or "",
+                                         project_address=project_address or "")
+                    elif PDF_AVAILABLE:
+                        generate_bom_pdf(bom_data, safe_output)
+                    result["pdf_path"] = safe_output
                 except Exception as e:
-                    result["pdf_error"] = str(e)
+                    logger.exception("bomsolar_smart_bom PDF failed")
+                    result["pdf_error"] = "PDF generation failed. See server logs."
 
     except Exception as e:
         result = {"success": False, "error": str(e)}
@@ -1499,9 +1733,31 @@ def bomsolar_design_system(
             batt_kwh = int(m.group(1))
         elif m := re.search(r"(\d+)\s*(?:kw|kwh)\s*(?:batt|แบต|แบท)", lo):
             batt_kwh = int(m.group(1))
+        # Parse explicit battery unit count: "5ลูก" / "5 ลูก" / "5ก้อน" / "x6ลูก" / "x 6ลูก"
+        batt_qty = 0
+        if m := re.search(r"x\s*(\d+)\s*(?:ลูก|ก้อน|units?)", lo):
+            batt_qty = int(m.group(1))
+        elif m := re.search(r"(?:batt|แบต|แบท).*?(\d+)\s*(?:ลูก|ก้อน|units?)", lo):
+            batt_qty = int(m.group(1))
+        elif m := re.search(r"(\d+)\s*(?:ลูก|ก้อน|units?)", lo):
+            batt_qty = int(m.group(1))
         want_ev = bool(re.search(r"dc\s*charg|ev\s*charg|ชาร์จ", lo))
         want_backup = bool(re.search(r"backup|สำรอง", lo))
+        # Parse explicit panel count (e.g. "42แผง", "42 แผง", "12panels")
+        explicit_panel_qty = 0
+        if m := re.search(r"(\d+)\s*แผง", lo):
+            val = int(m.group(1))
+            if 0 < val < 400:  # Only treat as count, not watts (400+)
+                explicit_panel_qty = val
+        elif m := re.search(r"(\d+)\s*panels?", lo, re.IGNORECASE):
+            val = int(m.group(1))
+            if 0 < val < 400:
+                explicit_panel_qty = val
+        # is_ci kept for non-ATMOCE brand logic; ATMOCE uses explicit MI model detection instead
         is_ci = system_kw >= 30 or bool(re.search(r"c&i|c\si|commercial|โรงงาน", lo))
+        # Explicit ATMOCE MI model override
+        force_mi500 = bool(re.search(r"mi[\-\s]*500", lo))
+        force_mi1250 = bool(re.search(r"mi[\-\s]*1250", lo))
 
         # Resolve panel defaults if not explicit
         if not panel_watts:
@@ -1509,7 +1765,7 @@ def bomsolar_design_system(
         if not panel_brand:
             panel_brand = "AIKO" if inv_brand == "Sigenergy" else "JA Solar"
 
-        panel_qty_formula = math.ceil(system_kw * 1000 / panel_watts)
+        panel_qty_formula = explicit_panel_qty if explicit_panel_qty > 0 else math.ceil(system_kw * 1000 / panel_watts)
 
         parsed = {
             "brand": inv_brand,
@@ -1520,6 +1776,7 @@ def bomsolar_design_system(
             "panel_qty_formula": panel_qty_formula,
             "want_battery": want_batt,
             "battery_kwh_requested": batt_kwh,
+            "battery_qty_forced": batt_qty,
             "want_ev_charger": want_ev,
             "want_backup": want_backup,
             "is_ci": is_ci,
@@ -1676,12 +1933,15 @@ def bomsolar_design_system(
                         "subtotal_kw": kw * qty,
                     })
             else:
-                # ATMOCE recommendation based on CI/residential rule
-                if is_ci:
+                # ATMOCE: MI-500 default for ALL systems; MI-1250 only when explicitly requested
+                if force_mi1250:
                     mi_kw, mi_model = 1.25, "MI-1250"
+                    mi_note = "MI-1250 (explicit request)"
+                    mi_qty = math.ceil(system_kw / mi_kw)
                 else:
                     mi_kw, mi_model = 0.5, "MI-500"
-                mi_qty = math.ceil(system_kw / mi_kw)
+                    mi_note = "MI-500 default"
+                    mi_qty = explicit_panel_qty if explicit_panel_qty > 0 else math.ceil(system_kw / mi_kw)
                 mi_row = next(
                     (r for r in inv_rows if mi_model in " ".join(str(v) for v in r.values()) and _price(r) > 0),
                     None,
@@ -1695,7 +1955,7 @@ def bomsolar_design_system(
                     "unit_price": mi_price,
                     "total_price": mi_qty * mi_price,
                     "subtotal_kw": mi_kw * mi_qty,
-                    "note": f"{'C&I' if is_ci else 'Residential'} default",
+                    "note": mi_note,
                 })
 
         # ── Panel catalog ─────────────────────────────────────────────────────
@@ -1760,7 +2020,7 @@ def bomsolar_design_system(
         # Add recommended battery pick
         recommended_battery = None
         if want_batt and battery_options:
-            recommended_battery = _find_best_battery(inv_brand, batt_kwh, batt_rows, _price, _field, phase=phase)
+            recommended_battery = _find_best_battery(inv_brand, batt_kwh, batt_rows, _price, _field, phase=phase, forced_qty=batt_qty)
 
         # ── Cable catalog ─────────────────────────────────────────────────────
         cable_options = []
@@ -1781,12 +2041,13 @@ def bomsolar_design_system(
                 cable_options.append({"model": model, "price": price})
 
         # ── Engineering hints ─────────────────────────────────────────────────
-        pea_fee_table = [
-            (10, 6000), (20, 8500), (30, 12500), (40, 15500),
-            (100, 21500), (200, 24000), (500, 36000), (1000, 46000),
+        # PEA rates — aligned to nasri pricing_tiers / PEA official fee schedule 2566
+        _hint_pea_table = [
+            (10, 7_000), (20, 15_000), (40, 25_000),
+            (100, 50_000), (250, 100_000),
         ]
-        pea_fee = 46000
-        for max_kw, fee in pea_fee_table:
+        pea_fee = 200_000  # >250 kW fallback
+        for max_kw, fee in _hint_pea_table:
             if system_kw <= max_kw:
                 pea_fee = fee
                 break
@@ -1809,13 +2070,16 @@ def bomsolar_design_system(
             "available_inverter_kw_sizes": sorted(set(opt["kw"] for opt in inv_options)) if inv_options else [],
             "panel_count_formula": f"ceil({system_kw}kW × 1000 / {panel_watts}W) = {panel_qty_formula} panels",
             "engineering_rules": {
-                "labor": "4.5 ฿/Wp",
-                "bos": "0.7 ฿/Wp",
-                "error_cost": "1.0 ฿/Wp",
+                "labor_tiered": "≤10kW→5.0 ฿/Wp | 10-50kW→4.5 ฿/Wp | 50-200kW→4.0 ฿/Wp | >200kW→3.5 ฿/Wp",
+                "bos": "2.0 ฿/Wp",
+                "contingency": "0.5 ฿/Wp",
                 "vat": "7% on equipment total only",
                 "crane": "15,000 ฿ for systems ≥ 30kW",
-                "pea_mea_fee_for_this_system": f"฿{pea_fee:,} (for {system_kw}kW)",
-                "pea_mea_tiers": "10→6000, 20→8500, 30→12500, 40→15500, 100→21500, 200→24000, 500→36000, 1000→46000",
+                "transport": "≤10kW→3,000 | 10-50kW→5,000 | 50-200kW→8,000 | >200kW→15,000 ฿",
+                "sld_design": "≤30kW→3,000 | 30-100kW→5,000 | >100kW→8,000 ฿",
+                "pea_fee_for_this_system": f"฿{pea_fee:,} (PEA, {system_kw}kW)",
+                "pea_tiers": "≤10kW→7,000 | ≤20kW→15,000 | ≤40kW→25,000 | ≤100kW→50,000 | ≤250kW→100,000 | >250kW→200,000 ฿",
+                "mea_tiers": "≤10kW→10,000 | ≤40kW→25,000 | >40kW→70,000 ฿ (กทม./นนทบุรี/สมุทรปราการ)",
             },
             "brand_rules": {},
             "inverter_suggestion_summary": inv_suggestion_summary,
@@ -1832,8 +2096,8 @@ def bomsolar_design_system(
             brand_rules["dc_cable"] = "Use CB-1060AB (6sqmm) for Sigenergy, not CB-1040AB."
             brand_rules["ev_charger"] = "EVDC charger available if want_ev_charger=True."
         elif inv_brand == "ATMOCE":
-            brand_rules["residential_default"] = "MI-500 (0.5kW each) for systems < 30kW."
-            brand_rules["ci_default"] = "MI-1250 (1.25kW each) for ≥ 30kW or C&I."
+            brand_rules["default"] = "MI-500 (0.5kW each) for all ATMOCE systems."
+            brand_rules["ci_option"] = "MI-1250 (1.25kW each) only when explicitly requested."
             brand_rules["combiner"] = "Add MC100T (3P) or MC100 (1P) combiner."
             brand_rules["backup_box"] = "MU100T (3P) or MU100S (1P) for backup."
         elif inv_brand == "Huawei":
@@ -2150,12 +2414,15 @@ def bomsolar_line_guide() -> dict:
             "Trina 625, 8 (lookup from catalog)",
         ],
         "cost_rules": {
-            "labor": "4.5 ฿/Wp",
-            "bos": "0.7 ฿/Wp",
-            "error_cost": "1.0 ฿/Wp",
+            "labor_tiered": "≤10kW→5.0 | 10-50kW→4.5 | 50-200kW→4.0 | >200kW→3.5 ฿/Wp",
+            "bos": "2.0 ฿/Wp",
+            "contingency": "0.5 ฿/Wp",
             "vat": "7% (equipment only)",
             "crane": "15,000 ฿ (systems ≥ 30kW)",
-            "pea_mea_tiers": "10kW→6000, 20kW→8500, 30kW→12500, 40kW→15500, 100kW→21500, 200kW→24000, 500kW→36000, 1000kW→46000",
+            "transport": "≤10kW→3,000 | 10-50kW→5,000 | 50-200kW→8,000 | >200kW→15,000 ฿",
+            "sld_design": "≤30kW→3,000 | 30-100kW→5,000 | >100kW→8,000 ฿",
+            "pea_tiers_baht": "≤10kW→7,000 | ≤20kW→15,000 | ≤40kW→25,000 | ≤100kW→50,000 | ≤250kW→100,000 | >250kW→200,000",
+            "mea_tiers_baht": "≤10kW→10,000 | ≤40kW→25,000 | >40kW→70,000 (กทม./นนทบุรี/สมุทรปราการ)",
         },
         "deploy": {
             "server": "ai.enervia.co.th",
