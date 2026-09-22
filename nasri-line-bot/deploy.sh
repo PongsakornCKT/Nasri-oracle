@@ -1,7 +1,17 @@
 #!/bin/bash
 # Deploy nasri-line-bot to ai.enervia.co.th
-# Usage: bash nasri-line-bot/deploy.sh
+# Usage: bash nasri-line-bot/deploy.sh [--dry-run]
+#   --dry-run          preflight + backup + print upload plan, no upload, no restart
+#   DEPLOY_EXPECT_LIVE  commit live is expected to be at (default: live/ai-enervia-2026-09-22)
+#   DEPLOY_ALLOW_DRIFT=1  skip the hard-stop when live != DEPLOY_EXPECT_LIVE (real run only)
 set -euo pipefail
+
+DRY_RUN=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+  esac
+done
 
 # ── Load secrets from env file (never committed) ──────────────
 SECRETS_FILE="${NASRI_SECRETS_FILE:-/home/po-ch/.nasri-deploy-secrets}"
@@ -29,6 +39,91 @@ REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR/deploy}"
 COOKIES="/tmp/plesk_cookies"
 
+DEPLOY_EXPECT_LIVE="${DEPLOY_EXPECT_LIVE:-live/ai-enervia-2026-09-22}"
+BACKUP_DIR="$HOME/.oracle/backups/nasri-bot/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+: > "$BACKUP_DIR/not-on-live.txt"
+MANIFEST="$BACKUP_DIR/MANIFEST.md"
+{
+  echo "# Backup manifest — $(date -Iseconds)"
+  echo ""
+  echo "Rollback: for each file below, re-upload it with:"
+  echo '  "${CURLF[@]}" -T "'"$BACKUP_DIR"'/<path>" "$FTP/ai.enervia.co.th/<path>"'
+  echo ""
+  echo "| repo-relative path | remote path | sha1 (live copy) |"
+  echo "|---|---|---|"
+} > "$MANIFEST"
+
+DRIFT=()
+
+# backup_file <local_path> <remote_url> <repo_relpath>
+# Downloads whatever is currently live for this file into BACKUP_DIR before
+# we ever overwrite it. Missing-on-live is not an error — it means the file
+# is new — logged to not-on-live.txt instead of MANIFEST.
+backup_file() {
+  local local_path="$1" remote_url="$2" rel="$3"
+  [ -f "$local_path" ] || return 0
+  local dest="$BACKUP_DIR/$rel"
+  mkdir -p "$(dirname "$dest")"
+  if "${CURLF[@]}" -o "$dest" "$remote_url" 2>/dev/null && [ -s "$dest" ]; then
+    local sha; sha=$(sha1sum "$dest" | cut -d' ' -f1)
+    echo "| $rel | ai.enervia.co.th/${remote_url#*ai.enervia.co.th/} | $sha |" >> "$MANIFEST"
+    echo "  📥 backed up: $rel"
+  else
+    rm -f "$dest"
+    echo "$rel" >> "$BACKUP_DIR/not-on-live.txt"
+    echo "  ℹ️  not on live (new file): $rel"
+  fi
+}
+
+# preflight_check <repo_relpath> <remote_url>
+# Compares the live copy's sha1 against git's copy of that file at
+# DEPLOY_EXPECT_LIVE. Any mismatch is recorded in DRIFT — a file that isn't
+# in that commit at all (e.g. bom-parser.js, added after the snapshot) is
+# also drift, just an expected one.
+preflight_check() {
+  local rel="$1" remote_url="$2"
+  local tmp; tmp=$(mktemp)
+  local live_sha expect_sha
+  if "${CURLF[@]}" -o "$tmp" "$remote_url" 2>/dev/null && [ -s "$tmp" ]; then
+    live_sha=$(sha1sum "$tmp" | cut -d' ' -f1)
+  else
+    live_sha="MISSING"
+  fi
+  rm -f "$tmp"
+  if expect_sha=$(git -C "$REPO_ROOT" show "${DEPLOY_EXPECT_LIVE}:${rel}" 2>/dev/null | sha1sum | cut -d' ' -f1); then
+    :
+  else
+    expect_sha="NOT_IN_COMMIT"
+  fi
+  if [ "$live_sha" != "$expect_sha" ]; then
+    DRIFT+=("$rel  live=$live_sha  expect(${DEPLOY_EXPECT_LIVE})=$expect_sha")
+  fi
+}
+
+echo "🔎 Preflight: comparing live vs ${DEPLOY_EXPECT_LIVE}..."
+preflight_check "nasri-line-bot/deploy/app.js"           "$FTP/ai.enervia.co.th/app.js"
+preflight_check "nasri-line-bot/deploy/bom-parser.js"    "$FTP/ai.enervia.co.th/bom-parser.js"
+preflight_check "mcp-bomsolar/srp_calculator.py"          "$FTP/ai.enervia.co.th/mcp-bomsolar/srp_calculator.py"
+preflight_check "mcp-bomsolar/srp_calc_cli.py"             "$FTP/ai.enervia.co.th/mcp-bomsolar/srp_calc_cli.py"
+preflight_check "mcp-qsolar/server.py"                     "$FTP/ai.enervia.co.th/mcp-qsolar/server.py"
+
+if [ "${#DRIFT[@]}" -gt 0 ]; then
+  echo "⚠️  Drift vs ${DEPLOY_EXPECT_LIVE}:"
+  for d in "${DRIFT[@]}"; do echo "  - $d"; done
+  if [ "$DRY_RUN" -ne 1 ] && [ "${DEPLOY_ALLOW_DRIFT:-0}" != "1" ]; then
+    echo "❌ live doesn't match ${DEPLOY_EXPECT_LIVE} — stopping before any upload." >&2
+    echo "   Set DEPLOY_ALLOW_DRIFT=1 to override (only after confirming the drift is expected)." >&2
+    exit 1
+  fi
+else
+  echo "  ✓ live matches ${DEPLOY_EXPECT_LIVE} on all preflight files"
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "🧪 --dry-run: backing up current live files, no upload, no restart"
+fi
+
 # ── 1. Core app files ──────────────────────────────────────────
 # ทุกไฟล์ในลิสต์นี้ "ต้องมี" เสมอ (ไม่ใช่ของเสริมที่ข้ามได้แบบ assets) — เช็คให้ครบ
 # ก่อนเริ่มอัปสักไฟล์เดียว กัน set -e ตายกลางทางหลังอัป app.js ไปแล้วแต่ไฟล์ถัดมาหาย
@@ -41,40 +136,87 @@ for f in "${CORE_FILES[@]}"; do
     exit 1
   fi
 done
-echo "📦 Uploading app files..."
-"${CURLF[@]}" -T "$DEPLOY_DIR/app.js"              "$FTP/ai.enervia.co.th/app.js"
-"${CURLF[@]}" -T "$DEPLOY_DIR/bom-parser.js"       "$FTP/ai.enervia.co.th/bom-parser.js"
-"${CURLF[@]}" -T "$DEPLOY_DIR/package.json"        "$FTP/ai.enervia.co.th/package.json"
-"${CURLF[@]}" -T "$DEPLOY_DIR/public/index.html"   "$FTP/ai.enervia.co.th/public/index.html"
-echo "  ✓ App files uploaded"
+
+echo "📦 Backing up + uploading app files..."
+backup_file "$DEPLOY_DIR/app.js"            "$FTP/ai.enervia.co.th/app.js"            "nasri-line-bot/deploy/app.js"
+backup_file "$DEPLOY_DIR/bom-parser.js"     "$FTP/ai.enervia.co.th/bom-parser.js"     "nasri-line-bot/deploy/bom-parser.js"
+backup_file "$DEPLOY_DIR/package.json"      "$FTP/ai.enervia.co.th/package.json"      "nasri-line-bot/deploy/package.json"
+backup_file "$DEPLOY_DIR/public/index.html" "$FTP/ai.enervia.co.th/public/index.html" "nasri-line-bot/deploy/public/index.html"
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "  (dry-run) would upload: app.js bom-parser.js package.json public/index.html"
+else
+  "${CURLF[@]}" -T "$DEPLOY_DIR/app.js"              "$FTP/ai.enervia.co.th/app.js"
+  "${CURLF[@]}" -T "$DEPLOY_DIR/bom-parser.js"       "$FTP/ai.enervia.co.th/bom-parser.js"
+  "${CURLF[@]}" -T "$DEPLOY_DIR/package.json"        "$FTP/ai.enervia.co.th/package.json"
+  "${CURLF[@]}" -T "$DEPLOY_DIR/public/index.html"   "$FTP/ai.enervia.co.th/public/index.html"
+  echo "  ✓ App files uploaded"
+fi
 
 # ── 2. mcp-qsolar Python scripts ──────────────────────────────
-echo "🐍 Uploading mcp-qsolar..."
+echo "🐍 Backing up + uploading mcp-qsolar..."
 QSOLAR_SRC="$REPO_ROOT/mcp-qsolar"
 QSOLAR_DEST="$FTP/ai.enervia.co.th/mcp-qsolar"
 for f in server.py generate_pdf.py sheet_prices.py sheets.py thai_baht.py __init__.py; do
-  [ -f "$QSOLAR_SRC/$f" ] && "${CURLF[@]}" -T "$QSOLAR_SRC/$f" "$QSOLAR_DEST/$f" && echo "  ✓ $f"
+  [ -f "$QSOLAR_SRC/$f" ] || continue
+  backup_file "$QSOLAR_SRC/$f" "$QSOLAR_DEST/$f" "mcp-qsolar/$f"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  (dry-run) would upload: mcp-qsolar/$f"
+  else
+    "${CURLF[@]}" -T "$QSOLAR_SRC/$f" "$QSOLAR_DEST/$f" && echo "  ✓ $f"
+  fi
 done
-echo "  ✓ mcp-qsolar uploaded"
+echo "  ✓ mcp-qsolar done"
 
 # ── 2b. mcp-bomsolar Python scripts ─────────────────────────
-echo "🐍 Uploading mcp-bomsolar..."
+echo "🐍 Backing up + uploading mcp-bomsolar..."
 BOMSOLAR_SRC="$REPO_ROOT/mcp-bomsolar"
 BOMSOLAR_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar"
 for f in server.py sheets.py survey_catalog.py srp_calculator.py srp_calc_cli.py; do
-  [ -f "$BOMSOLAR_SRC/$f" ] && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/$f" "$BOMSOLAR_DEST/$f" && echo "  ✓ $f"
+  [ -f "$BOMSOLAR_SRC/$f" ] || continue
+  backup_file "$BOMSOLAR_SRC/$f" "$BOMSOLAR_DEST/$f" "mcp-bomsolar/$f"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  (dry-run) would upload: mcp-bomsolar/$f"
+  else
+    "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/$f" "$BOMSOLAR_DEST/$f" && echo "  ✓ $f"
+  fi
 done
 # scripts/ subdirectory
 BOMSOLAR_SCRIPTS_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar/scripts"
 for f in generate_bom_pdf.py __init__.py; do
-  [ -f "$BOMSOLAR_SRC/scripts/$f" ] && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/scripts/$f" "$BOMSOLAR_SCRIPTS_DEST/$f" && echo "  ✓ scripts/$f"
+  [ -f "$BOMSOLAR_SRC/scripts/$f" ] || continue
+  backup_file "$BOMSOLAR_SRC/scripts/$f" "$BOMSOLAR_SCRIPTS_DEST/$f" "mcp-bomsolar/scripts/$f"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  (dry-run) would upload: mcp-bomsolar/scripts/$f"
+  else
+    "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/scripts/$f" "$BOMSOLAR_SCRIPTS_DEST/$f" && echo "  ✓ scripts/$f"
+  fi
 done
 # fixtures/ subdirectory
 BOMSOLAR_FIXTURES_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar/fixtures"
 for f in pricelist_fixture.json qpkg_fixture.json; do
-  [ -f "$BOMSOLAR_SRC/fixtures/$f" ] && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/fixtures/$f" "$BOMSOLAR_FIXTURES_DEST/$f" && echo "  ✓ fixtures/$f"
+  [ -f "$BOMSOLAR_SRC/fixtures/$f" ] || continue
+  backup_file "$BOMSOLAR_SRC/fixtures/$f" "$BOMSOLAR_FIXTURES_DEST/$f" "mcp-bomsolar/fixtures/$f"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  (dry-run) would upload: mcp-bomsolar/fixtures/$f"
+  else
+    "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/fixtures/$f" "$BOMSOLAR_FIXTURES_DEST/$f" && echo "  ✓ fixtures/$f"
+  fi
 done
-echo "  ✓ mcp-bomsolar uploaded"
+echo "  ✓ mcp-bomsolar done"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo ""
+  echo "🧪 --dry-run complete — no files uploaded, no restart."
+  echo "   Backups: $BACKUP_DIR"
+  echo "   Manifest: $MANIFEST"
+  if [ -s "$BACKUP_DIR/not-on-live.txt" ]; then
+    echo "   New (not currently on live): $(paste -sd, "$BACKUP_DIR/not-on-live.txt")"
+  fi
+  if [ "${#DRIFT[@]}" -gt 0 ]; then
+    echo "   Drift vs ${DEPLOY_EXPECT_LIVE}: ${#DRIFT[@]} file(s), see above"
+  fi
+  exit 0
+fi
 
 # ── 2c. Assets for bomsolar (fonts + logo) ───────────────────
 echo "🔤 Uploading bomsolar assets..."
