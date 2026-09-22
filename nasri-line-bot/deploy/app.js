@@ -172,6 +172,8 @@ var _bomCacheStore = require('./lib/bom-cache-store')(sqliteAvailable ? sqliteDb
 // Persists QT to nasri.sqlite using the v2 schema (migrate-v2.ts).
 // Env: BUN_PATH (if bun not in PATH), NASRI_DB_PATH (path to nasri.sqlite).
 var qtCrud = require('./lib/quotation-bridge');
+var _bomParser = require('./bom-parser');
+
 
 // ─── Python subprocess bridge (lib/python-bridge.js) ─────────
 // Spawns mcp-qsolar / mcp-bomsolar via child_process and hands off the
@@ -1027,6 +1029,40 @@ async function parseSystemSpec(text) {
       invBrand = otherBrand; // primary inverter is the other brand
     }
   }
+
+  // ── ATMOCE & Sigenergy Python Engine Integration (#N2) ──
+  if ((invBrand === 'ATMOCE' || invBrand === 'Sigenergy') && !atmoceBattKit) {
+    var parsedReq = _bomParser.parseBomRequest(text);
+    if (parsedReq.isAtmoceQuickReply) return { isAtmoceQuickReply: true, quickReplyMsg: parsedReq.quickReplyMsg };
+    if (parsedReq.isSigenergyQuickReply) return { isSigenergyQuickReply: true, quickReplyMsg: parsedReq.quickReplyMsg };
+    if (parsedReq.isSigenergyCiPrompt) return { isSigenergyCiPrompt: true, promptMsg: parsedReq.promptMsg };
+
+    try {
+      var pyRes = await srpCalcBom(parsedReq);
+      if (pyRes && pyRes.items) {
+        var resItems = pyRes.items.map(function(i) {
+          return {
+            k: i.k,
+            part_number: i.part_number || i.k || '',
+            part_name: i.part_name,
+            manufacturer: i.manufacturer,
+            category: i.category,
+            quantity: i.quantity,
+            unit: i.unit,
+            unit_cost: i.unit_cost !== null ? i.unit_cost : 0,
+            total_cost: i.total_cost !== null ? i.total_cost : 0,
+            notes: i.notes || ''
+          };
+        });
+
+        resItems._summaryText = pyRes.summary_text;
+        return resItems;
+      }
+    } catch (e) {
+      return { isSurveyError: true, errorMsg: e.message };
+    }
+  }
+
 
   // Detect panel brand + watts — dynamic, supports any brand from catalog
   var panelBrand = '', panelWatts = 0;
@@ -2669,8 +2705,20 @@ async function startBom(ev, specText) {
 
     try {
       var autoItems = await parseSystemSpec(specText);
-      _trace.path.push('spec-items:' + autoItems.length);
-      if (autoItems.length > 0) {
+      if (autoItems && (autoItems.isAtmoceQuickReply || autoItems.isSigenergyQuickReply)) {
+        await lReply(ev.replyToken, [autoItems.quickReplyMsg]);
+        return;
+      }
+      if (autoItems && autoItems.isSigenergyCiPrompt) {
+        await lReply(ev.replyToken, [autoItems.promptMsg]);
+        return;
+      }
+      if (autoItems && autoItems.isSurveyError) {
+        await rText(ev.replyToken, '❌ ' + autoItems.errorMsg);
+        return;
+      }
+      _trace.path.push('spec-items:' + (autoItems ? autoItems.length : 0));
+      if (Array.isArray(autoItems) && autoItems.length > 0) {
         sess.data.items = autoItems;
         sess.step = 'done';
         saveBom(k, sess.data, ev.source).catch(function(e) { console.error('[bom]', e); });
@@ -2718,13 +2766,26 @@ async function bomMsg(ev) {
     if (hasSystemSpec(lo)) {
       try {
         var specItems = await parseSystemSpec(text);
-        if (specItems.length > 0) {
+        if (specItems && (specItems.isAtmoceQuickReply || specItems.isSigenergyQuickReply)) {
+          await lReply(rt, [specItems.quickReplyMsg]);
+          return true;
+        }
+        if (specItems && specItems.isSigenergyCiPrompt) {
+          await lReply(rt, [specItems.promptMsg]);
+          return true;
+        }
+        if (specItems && specItems.isSurveyError) {
+          await rText(rt, '❌ ' + specItems.errorMsg);
+          return true;
+        }
+        if (Array.isArray(specItems) && specItems.length > 0) {
           specItems.forEach(function(it) { s.data.items.push(it); });
           await rText(rt, '📊 เพิ่ม ' + specItems.length + ' รายการจาก catalog\n\n' + specItems.map(function(it, i) { return '  ' + (i+1) + '. ' + it.part_name + ' x' + it.quantity + ' ฿' + it.total_cost.toLocaleString(); }).join('\n') + '\n\nรวม ' + s.data.items.length + ' รายการ | เพิ่มอีก หรือ "เสร็จ"');
           return true;
         }
       } catch (e) { console.error('[spec]', e); }
     }
+
 
     // Manual item parse
     var catalog = catalogCache.data;
@@ -4082,9 +4143,12 @@ var server = http.createServer(async function(req, res) {
 });
 
 var port = (typeof PhusionPassenger !== 'undefined') ? 'passenger' : (process.env.PORT || 3000);
-server.listen(port, function() {
-  console.log('🏠 Nasri LINE Bot listening on ' + port + ' [build=' + BUILD_MARKER + ']');
-});
+if (!process.env.NASRI_NO_LISTEN) {
+  server.listen(port, function() {
+    console.log('🏠 Nasri LINE Bot listening on ' + port + ' [build=' + BUILD_MARKER + ']');
+  });
+}
+
 
 // ─── Monthly Archive ─────────────────────────────────────────
 function archiveOldBoms() {

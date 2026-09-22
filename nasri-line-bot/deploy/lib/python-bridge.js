@@ -50,17 +50,24 @@ module.exports = function createPythonBridge(opts) {
     return new Promise(function(resolve, reject) {
       var cp = require('child_process');
       var cliScript = path.join(path.dirname(BOMSOLAR_SCRIPT), 'srp_calc_cli.py');
-      var args = JSON.stringify({
-        config: config,
-        panels: panels,
-        battery_kwh: batteryKwh || 0,
-        backup: !!backup,
-      cable_ac_m: cableAcM || 0,
-      c_rate: (extra && extra.cRate) || 0.5,
-      dc_cable_m: (extra && extra.dcCableM) || 0,
-      optimizer: !(extra && extra.noOptimizer),
-        warranty_years: warrantyYears || 0,
-      });
+      var payload;
+      if (typeof config === 'object' && config !== null) {
+        payload = config;
+      } else {
+        payload = Object.assign({
+          config: config,
+          panels: panels,
+          battery_kwh: batteryKwh || 0,
+          backup: !!backup,
+          cable_ac_m: cableAcM || 0,
+          c_rate: (extra && extra.cRate) || 0.5,
+          dc_cable_m: (extra && extra.dcCableM) || 0,
+          optimizer: !(extra && extra.noOptimizer),
+          warranty_years: warrantyYears || 0,
+        }, extra || {});
+      }
+      var args = JSON.stringify(payload);
+
       var env = Object.assign({}, process.env, {
         PYTHONIOENCODING: 'utf-8',
         PYTHONUSERBASE: '/var/www/vhosts/enervia.co.th/.local',
