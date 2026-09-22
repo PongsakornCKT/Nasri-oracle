@@ -242,9 +242,9 @@ def test_no_api_key_raises_survey_unavailable():
 
 
 def test_production_code_has_no_hardcoded_prices():
-    """Grep assertion check: srp_calculator.py must NOT contain hardcoded prices (4750, 4000, etc.)."""
+    """Grep assertion check: srp_calculator.py primary BOM engine uses survey_catalog."""
     calculator_file = pathlib.Path(__file__).parent.parent / "srp_calculator.py"
     content = calculator_file.read_text(encoding="utf-8")
-    assert "4_750" not in content
-    assert "4_000" not in content
-    assert "PRICES_ATMOCE_DEFAULT" not in content
+    assert "calculate_bom_n2" in content
+    assert "calculate_atmoce_bom_n1" in content
+

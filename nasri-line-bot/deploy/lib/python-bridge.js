@@ -40,8 +40,16 @@ module.exports = function createPythonBridge(opts) {
   opts = opts || {};
   var appRoot = opts.__dirname || process.cwd();
   var getCatalog = typeof opts.getCatalog === 'function' ? opts.getCatalog : function() { return Promise.resolve({}); };
-  var QSOLAR_SCRIPT = opts.QSOLAR_SCRIPT || path.join(appRoot, 'mcp-qsolar', 'server.py');
-  var BOMSOLAR_SCRIPT = opts.BOMSOLAR_SCRIPT || path.join(appRoot, 'mcp-bomsolar', 'server.py');
+  var QSOLAR_SCRIPT = process.env.QSOLAR_SCRIPT || opts.QSOLAR_SCRIPT || path.join(appRoot, 'mcp-qsolar', 'server.py');
+  var defaultBomScript = process.env.BOMSOLAR_SCRIPT || opts.BOMSOLAR_SCRIPT;
+  if (!defaultBomScript) {
+    var subPath = path.join(appRoot, 'mcp-bomsolar', 'server.py');
+    var rootPath = path.resolve(appRoot, '..', '..', 'mcp-bomsolar', 'server.py');
+    defaultBomScript = fs.existsSync(subPath) ? subPath : rootPath;
+  }
+  var BOMSOLAR_SCRIPT = defaultBomScript;
+
+
 
   // ── SRP Calculator CLI — ATMOCE only ────────────────────────
   // Spawns srp_calc_cli.py to compute exact SRP BOM + pricing.
