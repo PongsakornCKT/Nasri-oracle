@@ -29,8 +29,20 @@ DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR/deploy}"
 COOKIES="/tmp/plesk_cookies"
 
 # ── 1. Core app files ──────────────────────────────────────────
+# ทุกไฟล์ในลิสต์นี้ "ต้องมี" เสมอ (ไม่ใช่ของเสริมที่ข้ามได้แบบ assets) — เช็คให้ครบ
+# ก่อนเริ่มอัปสักไฟล์เดียว กัน set -e ตายกลางทางหลังอัป app.js ไปแล้วแต่ไฟล์ถัดมาหาย
+# (live ค้างครึ่งเดียว — พี่พงเจอ 2026-09-22)
+echo "📦 Checking core app files..."
+CORE_FILES=("$DEPLOY_DIR/app.js" "$DEPLOY_DIR/bom-parser.js" "$DEPLOY_DIR/package.json" "$DEPLOY_DIR/public/index.html")
+for f in "${CORE_FILES[@]}"; do
+  if [ ! -f "$f" ]; then
+    echo "❌ Core app file missing: $f — aborting before any upload." >&2
+    exit 1
+  fi
+done
 echo "📦 Uploading app files..."
 curl -s -T "$DEPLOY_DIR/app.js"              "$FTP/ai.enervia.co.th/app.js"
+curl -s -T "$DEPLOY_DIR/bom-parser.js"       "$FTP/ai.enervia.co.th/bom-parser.js"
 curl -s -T "$DEPLOY_DIR/package.json"        "$FTP/ai.enervia.co.th/package.json"
 curl -s -T "$DEPLOY_DIR/public/index.html"   "$FTP/ai.enervia.co.th/public/index.html"
 echo "  ✓ App files uploaded"
@@ -68,18 +80,21 @@ echo "🔤 Uploading bomsolar assets..."
 BOMSOLAR_ASSETS="$BOMSOLAR_SRC/assets"
 BOMSOLAR_ASSETS_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar/assets"
 # Fonts
-curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Regular.ttf" "$BOMSOLAR_ASSETS_DEST/fonts/TH-Sarabun-New-Regular.ttf"
-curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Bold.ttf"    "$BOMSOLAR_ASSETS_DEST/fonts/TH-Sarabun-New-Bold.ttf"
+[ -f "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Regular.ttf" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Regular.ttf" "$BOMSOLAR_ASSETS_DEST/fonts/TH-Sarabun-New-Regular.ttf" || true
+[ -f "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Bold.ttf" ]    && curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Bold.ttf"    "$BOMSOLAR_ASSETS_DEST/fonts/TH-Sarabun-New-Bold.ttf"    || true
 # Logo
-curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/logo/enervia.jpg" "$BOMSOLAR_ASSETS_DEST/logo/enervia.jpg"
+[ -f "$BOMSOLAR_ASSETS/logo/enervia.jpg" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/logo/enervia.jpg" "$BOMSOLAR_ASSETS_DEST/logo/enervia.jpg" || true
 echo "  ✓ Bomsolar assets uploaded"
 
 # ── 3. Assets: fonts ──────────────────────────────────────────
+# tmppic/ ไม่ได้ถูก track ในทุก worktree — ไฟล์นี้หายได้ (พี่พงเจอ 2026-09-22:
+# worktree ที่ไม่มี tmppic/ ทำให้ curl -T ไฟล์ไม่มี พัง set -e กลางทาง หลังอัป
+# app.js ไปแล้ว ค้างครึ่งเดียว) ใส่ guard แบบเดียวกับลูปรูปภาพด้านล่าง
 echo "🔤 Uploading fonts..."
 FONT_SRC="$REPO_ROOT/tmppic/tempagent/quotation-solar/assets/font"
 FONT_DEST="$FTP/ai.enervia.co.th/assets/font"
-curl -s -T "$FONT_SRC/TH-Sarabun-New-Regular.ttf" "$FONT_DEST/TH-Sarabun-New-Regular.ttf"
-curl -s -T "$FONT_SRC/TH-Sarabun-New-Bold.ttf"    "$FONT_DEST/TH-Sarabun-New-Bold.ttf"
+[ -f "$FONT_SRC/TH-Sarabun-New-Regular.ttf" ] && curl -s -T "$FONT_SRC/TH-Sarabun-New-Regular.ttf" "$FONT_DEST/TH-Sarabun-New-Regular.ttf" || true
+[ -f "$FONT_SRC/TH-Sarabun-New-Bold.ttf" ]    && curl -s -T "$FONT_SRC/TH-Sarabun-New-Bold.ttf"    "$FONT_DEST/TH-Sarabun-New-Bold.ttf"    || true
 echo "  ✓ Fonts uploaded"
 
 # ── 4. Assets: images ─────────────────────────────────────────
@@ -103,10 +118,9 @@ for f in \
 done
 echo "  ✓ Images uploaded"
 
-# ── 4b. Verify mcp-bomsolar uploads (sha1 match) ─────────────
-echo "🔍 Verifying mcp-bomsolar uploads..."
+# ── 4a. Verify core app files (sha1 match) ───────────────────
+echo "🔍 Verifying core app files..."
 VERIFY_FAIL=0
-BOMSOLAR_REMOTE="$FTP/ai.enervia.co.th/mcp-bomsolar"
 verify_file() {
   local local_path="$1" remote_url="$2" label="$3"
   [ -f "$local_path" ] || return 0
@@ -126,6 +140,11 @@ verify_file() {
     VERIFY_FAIL=1
   fi
 }
+verify_file "$DEPLOY_DIR/bom-parser.js" "$FTP/ai.enervia.co.th/bom-parser.js" "bom-parser.js"
+
+# ── 4b. Verify mcp-bomsolar uploads (sha1 match) ─────────────
+echo "🔍 Verifying mcp-bomsolar uploads..."
+BOMSOLAR_REMOTE="$FTP/ai.enervia.co.th/mcp-bomsolar"
 for f in server.py sheets.py survey_catalog.py srp_calculator.py srp_calc_cli.py; do
   verify_file "$BOMSOLAR_SRC/$f" "$BOMSOLAR_REMOTE/$f" "$f"
 done
