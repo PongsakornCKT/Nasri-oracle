@@ -13,6 +13,8 @@
 //   var pdf = await bridge.generateQuotationPdf(spec, customer, project);
 
 var path = require('path');
+var fs = require('fs');
+
 
 // Defensive customer-name cleanup before handoff to Python.
 // Strips control chars + zero-width + replacement char (U+FFFD), collapses

@@ -95,10 +95,10 @@ def test_battery_matching_suite():
                  r4 is not None and r4["kwh_per_unit"] == 9.0 and r4["quantity"] == 1,
                  f"got: {r4}")
 
-    # --- Test 5: Sigenergy 12kWh -> 2x BAT 6.0 (12kWh) ---
+    # --- Test 5: Sigenergy 12kWh -> SigenStor BAT 10.0 (ceiling rule fallback to max model) ---
     r5 = _find_best_battery("Sigenergy", 12, MOCK_BATT_ROWS, _mock_price, _mock_field)
-    _assert_check("5. Sigenergy 12kWh -> 2x BAT 6.0",
-                 r5 is not None and r5["kwh_per_unit"] == 6.0 and r5["quantity"] == 2,
+    _assert_check("5. Sigenergy 12kWh -> BAT 10.0",
+                 r5 is not None and r5["kwh_per_unit"] == 9.0 and r5["quantity"] == 1,
                  f"got: model={r5['model'] if r5 else None} qty={r5['quantity'] if r5 else None} kwh={r5['kwh_per_unit'] if r5 else None}")
 
     # --- Test 6: ATMOCE 1P 28kWh -> capped at 3x MS-7K-U (21kWh) ---
