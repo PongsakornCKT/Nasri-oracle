@@ -21,9 +21,11 @@ for key in "${REQUIRED_KEYS[@]}"; do
   fi
 done
 
-FTP="ftp://${NASRI_FTP_USER}:${NASRI_FTP_PASS}@${NASRI_FTP_URL}"
-DEPLOY_DIR="C:/Users/pO-Ch/Nasri-oracle/nasri-line-bot/deploy"
-REPO_ROOT="C:/Users/pO-Ch/Nasri-oracle"
+FTP_HOST="${NASRI_FTP_URL#ftp://}"; FTP_HOST="${FTP_HOST#ftps://}"; FTP_HOST="${FTP_HOST%/}"
+FTP="ftp://${NASRI_FTP_USER}:${NASRI_FTP_PASS}@${FTP_HOST}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR/deploy}"
 COOKIES="/tmp/plesk_cookies"
 
 # ── 1. Core app files ──────────────────────────────────────────
