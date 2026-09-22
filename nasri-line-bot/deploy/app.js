@@ -543,72 +543,9 @@ function designInverters(invRows, targetKw, phase, brand) {
   return bestSingle || bestMix || [];
 }
 
-function buildAtmoceQuickReply(origText) {
-  var cleanText = (origText || '').replace(/1:1|2:1|mi-500|mi-1250/gi, '').trim();
-  if (!cleanText) cleanText = 'atmoce';
-  return {
-    type: 'text',
-    text: 'กรุณาเลือกอัตราส่วน Micro Inverter ของระบบ ATMOCE ครับ:\n• 2:1 = 1 ไมโครต่อ 2 แผง (แนะนำ)\n• 1:1 = 1 ไมโครต่อ 1 แผง',
-    quickReply: {
-      items: [
-        {
-          type: 'action',
-          action: {
-            type: 'message',
-            label: '2:1 (แนะนำ)',
-            text: cleanText + ' 2:1'
-          }
-        },
-        {
-          type: 'action',
-          action: {
-            type: 'message',
-            label: '1:1',
-            text: cleanText + ' 1:1'
-          }
-        }
-      ]
-    }
-  };
-}
-
-function buildSigenergyQuickReply(originalText) {
-  var cleanText = String(originalText || '').trim();
-  if (!cleanText) cleanText = 'sigenergy';
-
-  return {
-    type: 'text',
-    text: 'กรุณาเลือกระบบ Sigenergy ที่ต้องการคำนวณ BOM ครับ ⚡:\n• 5 in 1 = ระบบ 5 in 1 Resi\n• SigenStor Neo = ระบบ SigenStor Neo\n• Sigenergy C&I = ระบบ C&I ภาคอุตสาหกรรม',
-    quickReply: {
-      items: [
-        {
-          type: 'action',
-          action: {
-            type: 'message',
-            label: '5 in 1',
-            text: cleanText + ' 5in1'
-          }
-        },
-        {
-          type: 'action',
-          action: {
-            type: 'message',
-            label: 'SigenStor Neo',
-            text: cleanText + ' neo'
-          }
-        },
-        {
-          type: 'action',
-          action: {
-            type: 'message',
-            label: 'Sigenergy C&I',
-            text: cleanText + ' c&i'
-          }
-        }
-      ]
-    }
-  };
-}
+var bomParser = require('./bom-parser');
+var buildAtmoceQuickReply = bomParser.buildAtmoceQuickReply;
+var buildSigenergyQuickReply = bomParser.buildSigenergyQuickReply;
 
 function callBomsolarCli(payload) {
   return new Promise(function(resolve, reject) {
@@ -638,14 +575,54 @@ function callBomsolarCli(payload) {
 }
 
 // ─── Smart System Spec Parser ────────────────────────────────
-// Parses natural language like "atmoce 5kw 1phase แผง JA625 + batt + backup"
+// Parses natural language like "atmoce 5kw 1phaseแผง JA625 + batt + backup"
 // into BOM items from the Google Sheets catalog
 
 async function parseSystemSpec(text) {
   var catalog = await getCatalog();
   if (!catalog) return [];
   var lo = text.toLowerCase();
-  var items = [];
+
+  // Detect inverter brand
+  var invBrand = '';
+  if (/atmoce/i.test(lo)) invBrand = 'ATMOCE';
+  else if (/huawei/i.test(lo)) invBrand = 'Huawei';
+  else if (/sol[io]s/i.test(lo)) invBrand = 'Solis';
+  else if (/deye/i.test(lo)) invBrand = 'Deye';
+  else if (/sig(?:energy)?/i.test(lo)) invBrand = 'Sigenergy';
+  else if (/hoymiles/i.test(lo)) invBrand = 'Hoymiles';
+  else if (/enphase/i.test(lo)) invBrand = 'Enphase';
+
+  // ── ATMOCE & Sigenergy Python Engine Integration ──
+  if (invBrand === 'ATMOCE' || invBrand === 'Sigenergy') {
+    var parsedReq = bomParser.parseBomRequest(text);
+    if (parsedReq.isAtmoceQuickReply) return { isAtmoceQuickReply: true, quickReplyMsg: parsedReq.quickReplyMsg };
+    if (parsedReq.isSigenergyQuickReply) return { isSigenergyQuickReply: true, quickReplyMsg: parsedReq.quickReplyMsg };
+    if (parsedReq.isSigenergyCiPrompt) return { isSigenergyCiPrompt: true, promptMsg: parsedReq.promptMsg };
+
+    try {
+      var pyRes = await callBomsolarCli(parsedReq);
+      if (pyRes && pyRes.items) {
+        var resItems = pyRes.items.map(function(i) {
+          return {
+            part_number: i.part_number,
+            part_name: i.part_name,
+            manufacturer: i.manufacturer,
+            category: i.category,
+            quantity: i.quantity,
+            unit: i.unit,
+            unit_cost: i.unit_cost !== null ? i.unit_cost : 0,
+            total_cost: i.total_cost !== null ? i.total_cost : 0,
+            notes: i.notes || ''
+          };
+        });
+        resItems._summaryText = pyRes.summary_text;
+        return resItems;
+      }
+    } catch (e) {
+      return { isSurveyError: true, errorMsg: e.message };
+    }
+  }
 
   // Detect system size (kW) — must come before phase detection
   var kwMatch = lo.match(/(\d+(?:\.\d+)?)\s*kw/);
@@ -659,15 +636,7 @@ async function parseSystemSpec(text) {
   else if (/1\s*(?:phase|เฟส|p\b)/i.test(text)) phase = '1P';
   else if (systemKw >= 15) phase = '3P'; // Large systems auto-upgrade to 3P
 
-  // Detect inverter brand
-  var invBrand = '';
-  if (/atmoce/i.test(lo)) invBrand = 'ATMOCE';
-  else if (/huawei/i.test(lo)) invBrand = 'Huawei';
-  else if (/sol[io]s/i.test(lo)) invBrand = 'Solis';
-  else if (/deye/i.test(lo)) invBrand = 'Deye';
-  else if (/sig(?:energy)?/i.test(lo)) invBrand = 'Sigenergy';
-  else if (/hoymiles/i.test(lo)) invBrand = 'Hoymiles';
-  else if (/enphase/i.test(lo)) invBrand = 'Enphase';
+  var items = [];
 
   // Detect panel brand + watts
   var panelBrand = '', panelWatts = 0;
@@ -701,120 +670,20 @@ async function parseSystemSpec(text) {
     var invSheet = 'Inverters - ' + invBrand;
     var invRows = catalog[invSheet] || [];
 
-    if (invBrand === 'ATMOCE') {
-      var isRatioSpecified = /1:1|2:1|mi-500|mi-1250/i.test(lo);
-      if (!isRatioSpecified) {
-        return { isAtmoceQuickReply: true, quickReplyMsg: buildAtmoceQuickReply(text) };
-      }
-      var ratio = /1:1|mi-500/i.test(lo) ? '1:1' : '2:1';
-
-      var panelCount = 0;
-      var pcm = text.match(/(\d+)\s*แผ[งง่]/);
-      if (pcm) {
-        panelCount = parseInt(pcm[1]);
-      } else {
-        var kwm = lo.match(/(\d+(?:\.\d+)?)\s*kw/);
-        var kw = kwm ? parseFloat(kwm[1]) : systemKw;
-        panelCount = Math.ceil(kw * 1000 / 650);
-      }
-      if (panelCount <= 0) panelCount = 10;
-
-      var trunkLen = /1\.3\s*m|1\.3/i.test(lo) ? '1.3' : '2.5';
-
-      try {
-        var pyRes = await callBomsolarCli({
-          action: 'atmoce_n1',
-          panels: panelCount,
-          ratio: ratio,
-          phase: phase,
-          roof_type: roofType,
-          trunk_cable_length: trunkLen,
-          battery_kwh: battKwh,
-          backup: wantBackup
-        });
-
-        if (pyRes && pyRes.items) {
-          var resItems = pyRes.items.map(function(i) {
-            return {
-              part_number: i.part_number,
-              part_name: i.part_name,
-              manufacturer: i.manufacturer,
-              category: i.category,
-              quantity: i.quantity,
-              unit: i.unit,
-              unit_cost: i.unit_cost !== null ? i.unit_cost : 0,
-              total_cost: i.total_cost !== null ? i.total_cost : 0,
-              notes: i.notes || ''
-            };
-          });
-          resItems._summaryText = pyRes.summary_text;
-          return resItems;
+    // Inverter Design Engine — handles exact match + smart combinations
+    var designed = designInverters(invRows, systemKw, phase, invBrand);
+    if (designed.length > 0) {
+      designed.forEach(function(d) {
+        var invPrice = extractPrice(d.row);
+        var note = '';
+        if (designed.length > 1) {
+          note = 'AI designed: ' + designed.length + ' models combined for ' + systemKw + 'kW';
+        } else if (d.qty > 1) {
+          note = 'AI designed: ' + d.qty + 'x ' + d.kw + 'kW = ' + (d.qty * d.kw) + 'kW';
         }
-      } catch (e) {
-        return { isSurveyError: true, errorMsg: e.message };
-      }
-    } else if (invBrand === 'Sigenergy') {
-      var isSigSubtypeSpecified = /5in1|5\s*in\s*1|neo|c&i|ci\b/i.test(lo);
-      if (!isSigSubtypeSpecified) {
-        return { isSigenergyQuickReply: true, quickReplyMsg: buildSigenergyQuickReply(text) };
-      }
-
-      var sysSubtype = 'sigenergy5in1';
-      if (/neo/i.test(lo)) sysSubtype = 'sigenneo';
-      else if (/c&i|ci\b/i.test(lo)) sysSubtype = 'sigenci';
-
-      var cRate = /0\.5c/i.test(lo) ? '0.5C' : '1C';
-
-      var panelCount = 0;
-      var pcm = text.match(/(\d+)\s*แผ[งง่]/);
-      if (pcm) {
-        panelCount = parseInt(pcm[1]);
-      } else {
-        var kwm = lo.match(/(\d+(?:\.\d+)?)\s*kw/);
-        var kw = kwm ? parseFloat(kwm[1]) : systemKw;
-        panelCount = Math.ceil(kw * 1000 / 650);
-      }
-      if (panelCount <= 0 && sysSubtype !== 'sigenci') panelCount = 16;
-
-      try {
-        var pyRes = await callBomsolarCli({
-          action: 'bom_n2',
-          system: sysSubtype,
-          panels: panelCount,
-          kw: systemKw,
-          phase: phase,
-          roof_type: roofType,
-          battery_kwh: battKwh,
-          backup: wantBackup,
-          c_rate: cRate
-        });
-
-        if (pyRes && pyRes.items) {
-          var resItems = pyRes.items.map(function(i) {
-            return {
-              part_number: i.part_number,
-              part_name: i.part_name,
-              manufacturer: i.manufacturer,
-              category: i.category,
-              quantity: i.quantity,
-              unit: i.unit,
-              unit_cost: i.unit_cost !== null ? i.unit_cost : 0,
-              total_cost: i.total_cost !== null ? i.total_cost : 0,
-              notes: i.notes || ''
-            };
-          });
-          resItems._summaryText = pyRes.summary_text;
-          return resItems;
-        }
-      } catch (e) {
-        return { isSurveyError: true, errorMsg: e.message };
-      }
+        items.push({ part_number: d.model, part_name: d.model + (d.type ? ' (' + d.type + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: d.qty, unit_cost: invPrice, total_cost: d.qty * invPrice, notes: note });
+      });
     } else {
-      // Inverter Design Engine — handles exact match + smart combinations
-      var designed = designInverters(invRows, systemKw, phase, invBrand);
-      if (designed.length > 0) {
-        designed.forEach(function(d) {
-          var invPrice = extractPrice(d.row);
           var note = '';
           if (designed.length > 1) {
             note = 'AI designed: ' + designed.length + ' models combined for ' + systemKw + 'kW';
