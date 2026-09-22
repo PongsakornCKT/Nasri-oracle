@@ -684,45 +684,35 @@ async function parseSystemSpec(text) {
         items.push({ part_number: d.model, part_name: d.model + (d.type ? ' (' + d.type + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: d.qty, unit_cost: invPrice, total_cost: d.qty * invPrice, notes: note });
       });
     } else {
-          var note = '';
-          if (designed.length > 1) {
-            note = 'AI designed: ' + designed.length + ' models combined for ' + systemKw + 'kW';
-          } else if (d.qty > 1) {
-            note = 'AI designed: ' + d.qty + 'x ' + d.kw + 'kW = ' + (d.qty * d.kw) + 'kW';
-          }
-          items.push({ part_number: d.model, part_name: d.model + (d.type ? ' (' + d.type + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: d.qty, unit_cost: invPrice, total_cost: d.qty * invPrice, notes: note });
-        });
-      } else {
-        // Fallback: closest single inverter
-        var bestInv = null, bestDiff = 9999;
-        invRows.forEach(function(r) {
-          var vals = Object.values(r).join(' ').toLowerCase();
-          var fb1P = /\b1p\b|1-phase|1phase|single.?phase/i.test(vals);
-          var fb3P = /\b3p\b|3-phase|3phase|three.?phase/i.test(vals);
-          var fbMatch = (!fb1P && !fb3P) || (phase === '1P' && fb1P) || (phase === '3P' && fb3P);
-          if (!fbMatch) return;
-          var firstKey = Object.keys(r)[0];
-          var fv = parseFloat(String(r[firstKey]).replace(/[^\d.]/g, ''));
-          if (fv > 0 && fv <= 1000) {
-            var diff = Math.abs(fv - systemKw);
-            if (diff < bestDiff) { bestDiff = diff; bestInv = r; }
-          }
-        });
-        if (bestInv) {
-          var invPrice = extractPrice(bestInv);
-          var invModel = extractField(bestInv, ['รุ่น', 'model', 'sku']) || invBrand + ' ' + systemKw + 'kW';
-          var invType = extractField(bestInv, ['ประเภท', 'type']) || '';
-          items.push({ part_number: invModel, part_name: invModel + (invType ? ' (' + invType + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: 'Note: closest available to ' + systemKw + 'kW' });
+      // Fallback: closest single inverter
+      var bestInv = null, bestDiff = 9999;
+      invRows.forEach(function(r) {
+        var vals = Object.values(r).join(' ').toLowerCase();
+        var fb1P = /\b1p\b|1-phase|1phase|single.?phase/i.test(vals);
+        var fb3P = /\b3p\b|3-phase|3phase|three.?phase/i.test(vals);
+        var fbMatch = (!fb1P && !fb3P) || (phase === '1P' && fb1P) || (phase === '3P' && fb3P);
+        if (!fbMatch) return;
+        var firstKey = Object.keys(r)[0];
+        var fv = parseFloat(String(r[firstKey]).replace(/[^\d.]/g, ''));
+        if (fv > 0 && fv <= 1000) {
+          var diff = Math.abs(fv - systemKw);
+          if (diff < bestDiff) { bestDiff = diff; bestInv = r; }
         }
+      });
+      if (bestInv) {
+        var invPrice = extractPrice(bestInv);
+        var invModel = extractField(bestInv, ['รุ่น', 'model', 'sku']) || invBrand + ' ' + systemKw + 'kW';
+        var invType = extractField(bestInv, ['ประเภท', 'type']) || '';
+        items.push({ part_number: invModel, part_name: invModel + (invType ? ' (' + invType + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: 'Note: closest available to ' + systemKw + 'kW' });
       }
-      if (invBrand === 'Huawei') {
-        // Smart Dongle WIFI
-        items.push({ part_number: 'Smart Dongle WIFI', part_name: 'Smart Dongle WIFI', manufacturer: 'Huawei', category: 'general', quantity: 1, unit_cost: 1730, total_cost: 1730, notes: '' });
-        // Power Sensor
-        var ctPrice = phase === '1P' ? 1750 : 3230;
-        var ctName = phase === '1P' ? 'Power Sensor 1P (CT)' : 'Power Sensor 3P (CT)';
-        items.push({ part_number: ctName, part_name: ctName, manufacturer: 'Huawei', category: 'general', quantity: 1, unit_cost: ctPrice, total_cost: ctPrice, notes: '' });
-      }
+    }
+    if (invBrand === 'Huawei') {
+      // Smart Dongle WIFI
+      items.push({ part_number: 'Smart Dongle WIFI', part_name: 'Smart Dongle WIFI', manufacturer: 'Huawei', category: 'general', quantity: 1, unit_cost: 1730, total_cost: 1730, notes: '' });
+      // Power Sensor
+      var ctPrice = phase === '1P' ? 1750 : 3230;
+      var ctName = phase === '1P' ? 'Power Sensor 1P (CT)' : 'Power Sensor 3P (CT)';
+      items.push({ part_number: ctName, part_name: ctName, manufacturer: 'Huawei', category: 'general', quantity: 1, unit_cost: ctPrice, total_cost: ctPrice, notes: '' });
     }
 
     // Sigenergy EV charger
@@ -2210,10 +2200,12 @@ var server = http.createServer(async function(req, res) {
   res.end('{"error":"Not found"}');
 });
 
-var port = (typeof PhusionPassenger !== 'undefined') ? 'passenger' : (process.env.PORT || 3000);
-server.listen(port, function() {
-  console.log('🏠 Nasri LINE Bot listening on ' + port);
-});
+if (require.main === module) {
+  var port = (typeof PhusionPassenger !== 'undefined') ? 'passenger' : (process.env.PORT || 3000);
+  server.listen(port, function() {
+    console.log('🏠 Nasri LINE Bot listening on ' + port);
+  });
+}
 
 // ─── Monthly Archive ─────────────────────────────────────────
 function archiveOldBoms() {
@@ -2282,12 +2274,14 @@ function archiveOldBoms() {
   } catch (e) { console.error('[archive]', e.message); }
 }
 
-// Run archive check on startup and every 24 hours
-archiveOldBoms();
-setInterval(archiveOldBoms, 24 * 60 * 60 * 1000);
+// Run archive check and session cleanup timers (only when running as main module)
+if (require.main === module) {
+  archiveOldBoms();
+  setInterval(archiveOldBoms, 24 * 60 * 60 * 1000);
 
-// Cleanup expired sessions
-setInterval(function() {
-  var now = Date.now();
-  sessions.forEach(function(s, k) { if (now - s.up > TIMEOUT) sessions.delete(k); });
-}, 5 * 60 * 1000);
+  // Cleanup expired sessions
+  setInterval(function() {
+    var now = Date.now();
+    sessions.forEach(function(s, k) { if (now - s.up > TIMEOUT) sessions.delete(k); });
+  }, 5 * 60 * 1000);
+}
