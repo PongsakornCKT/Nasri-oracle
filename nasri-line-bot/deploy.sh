@@ -22,7 +22,8 @@ for key in "${REQUIRED_KEYS[@]}"; do
 done
 
 FTP_HOST="${NASRI_FTP_URL#ftp://}"; FTP_HOST="${FTP_HOST#ftps://}"; FTP_HOST="${FTP_HOST%/}"
-FTP="ftp://${NASRI_FTP_USER}:${NASRI_FTP_PASS}@${FTP_HOST}"
+FTP="ftp://${FTP_HOST}"
+CURLF=(curl -s --user "${NASRI_FTP_USER}:${NASRI_FTP_PASS}")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 DEPLOY_DIR="${DEPLOY_DIR:-$SCRIPT_DIR/deploy}"
@@ -41,10 +42,10 @@ for f in "${CORE_FILES[@]}"; do
   fi
 done
 echo "📦 Uploading app files..."
-curl -s -T "$DEPLOY_DIR/app.js"              "$FTP/ai.enervia.co.th/app.js"
-curl -s -T "$DEPLOY_DIR/bom-parser.js"       "$FTP/ai.enervia.co.th/bom-parser.js"
-curl -s -T "$DEPLOY_DIR/package.json"        "$FTP/ai.enervia.co.th/package.json"
-curl -s -T "$DEPLOY_DIR/public/index.html"   "$FTP/ai.enervia.co.th/public/index.html"
+"${CURLF[@]}" -T "$DEPLOY_DIR/app.js"              "$FTP/ai.enervia.co.th/app.js"
+"${CURLF[@]}" -T "$DEPLOY_DIR/bom-parser.js"       "$FTP/ai.enervia.co.th/bom-parser.js"
+"${CURLF[@]}" -T "$DEPLOY_DIR/package.json"        "$FTP/ai.enervia.co.th/package.json"
+"${CURLF[@]}" -T "$DEPLOY_DIR/public/index.html"   "$FTP/ai.enervia.co.th/public/index.html"
 echo "  ✓ App files uploaded"
 
 # ── 2. mcp-qsolar Python scripts ──────────────────────────────
@@ -52,7 +53,7 @@ echo "🐍 Uploading mcp-qsolar..."
 QSOLAR_SRC="$REPO_ROOT/mcp-qsolar"
 QSOLAR_DEST="$FTP/ai.enervia.co.th/mcp-qsolar"
 for f in server.py generate_pdf.py sheet_prices.py sheets.py thai_baht.py __init__.py; do
-  [ -f "$QSOLAR_SRC/$f" ] && curl -s -T "$QSOLAR_SRC/$f" "$QSOLAR_DEST/$f" && echo "  ✓ $f"
+  [ -f "$QSOLAR_SRC/$f" ] && "${CURLF[@]}" -T "$QSOLAR_SRC/$f" "$QSOLAR_DEST/$f" && echo "  ✓ $f"
 done
 echo "  ✓ mcp-qsolar uploaded"
 
@@ -61,17 +62,17 @@ echo "🐍 Uploading mcp-bomsolar..."
 BOMSOLAR_SRC="$REPO_ROOT/mcp-bomsolar"
 BOMSOLAR_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar"
 for f in server.py sheets.py survey_catalog.py srp_calculator.py srp_calc_cli.py; do
-  [ -f "$BOMSOLAR_SRC/$f" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_SRC/$f" "$BOMSOLAR_DEST/$f" && echo "  ✓ $f"
+  [ -f "$BOMSOLAR_SRC/$f" ] && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/$f" "$BOMSOLAR_DEST/$f" && echo "  ✓ $f"
 done
 # scripts/ subdirectory
 BOMSOLAR_SCRIPTS_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar/scripts"
 for f in generate_bom_pdf.py __init__.py; do
-  [ -f "$BOMSOLAR_SRC/scripts/$f" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_SRC/scripts/$f" "$BOMSOLAR_SCRIPTS_DEST/$f" && echo "  ✓ scripts/$f"
+  [ -f "$BOMSOLAR_SRC/scripts/$f" ] && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/scripts/$f" "$BOMSOLAR_SCRIPTS_DEST/$f" && echo "  ✓ scripts/$f"
 done
 # fixtures/ subdirectory
 BOMSOLAR_FIXTURES_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar/fixtures"
 for f in pricelist_fixture.json qpkg_fixture.json; do
-  [ -f "$BOMSOLAR_SRC/fixtures/$f" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_SRC/fixtures/$f" "$BOMSOLAR_FIXTURES_DEST/$f" && echo "  ✓ fixtures/$f"
+  [ -f "$BOMSOLAR_SRC/fixtures/$f" ] && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_SRC/fixtures/$f" "$BOMSOLAR_FIXTURES_DEST/$f" && echo "  ✓ fixtures/$f"
 done
 echo "  ✓ mcp-bomsolar uploaded"
 
@@ -80,10 +81,10 @@ echo "🔤 Uploading bomsolar assets..."
 BOMSOLAR_ASSETS="$BOMSOLAR_SRC/assets"
 BOMSOLAR_ASSETS_DEST="$FTP/ai.enervia.co.th/mcp-bomsolar/assets"
 # Fonts
-[ -f "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Regular.ttf" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Regular.ttf" "$BOMSOLAR_ASSETS_DEST/fonts/TH-Sarabun-New-Regular.ttf" || true
-[ -f "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Bold.ttf" ]    && curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Bold.ttf"    "$BOMSOLAR_ASSETS_DEST/fonts/TH-Sarabun-New-Bold.ttf"    || true
+[ -f "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Regular.ttf" ] && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Regular.ttf" "$BOMSOLAR_ASSETS_DEST/fonts/TH-Sarabun-New-Regular.ttf" || true
+[ -f "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Bold.ttf" ]    && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_ASSETS/fonts/TH-Sarabun-New-Bold.ttf"    "$BOMSOLAR_ASSETS_DEST/fonts/TH-Sarabun-New-Bold.ttf"    || true
 # Logo
-[ -f "$BOMSOLAR_ASSETS/logo/enervia.jpg" ] && curl -s --ftp-create-dirs -T "$BOMSOLAR_ASSETS/logo/enervia.jpg" "$BOMSOLAR_ASSETS_DEST/logo/enervia.jpg" || true
+[ -f "$BOMSOLAR_ASSETS/logo/enervia.jpg" ] && "${CURLF[@]}" --ftp-create-dirs -T "$BOMSOLAR_ASSETS/logo/enervia.jpg" "$BOMSOLAR_ASSETS_DEST/logo/enervia.jpg" || true
 echo "  ✓ Bomsolar assets uploaded"
 
 # ── 3. Assets: fonts ──────────────────────────────────────────
@@ -93,8 +94,8 @@ echo "  ✓ Bomsolar assets uploaded"
 echo "🔤 Uploading fonts..."
 FONT_SRC="$REPO_ROOT/tmppic/tempagent/quotation-solar/assets/font"
 FONT_DEST="$FTP/ai.enervia.co.th/assets/font"
-[ -f "$FONT_SRC/TH-Sarabun-New-Regular.ttf" ] && curl -s -T "$FONT_SRC/TH-Sarabun-New-Regular.ttf" "$FONT_DEST/TH-Sarabun-New-Regular.ttf" || true
-[ -f "$FONT_SRC/TH-Sarabun-New-Bold.ttf" ]    && curl -s -T "$FONT_SRC/TH-Sarabun-New-Bold.ttf"    "$FONT_DEST/TH-Sarabun-New-Bold.ttf"    || true
+[ -f "$FONT_SRC/TH-Sarabun-New-Regular.ttf" ] && "${CURLF[@]}" -T "$FONT_SRC/TH-Sarabun-New-Regular.ttf" "$FONT_DEST/TH-Sarabun-New-Regular.ttf" || true
+[ -f "$FONT_SRC/TH-Sarabun-New-Bold.ttf" ]    && "${CURLF[@]}" -T "$FONT_SRC/TH-Sarabun-New-Bold.ttf"    "$FONT_DEST/TH-Sarabun-New-Bold.ttf"    || true
 echo "  ✓ Fonts uploaded"
 
 # ── 4. Assets: images ─────────────────────────────────────────
@@ -114,7 +115,7 @@ for f in \
   "Sigenergy present3.png" "Sigenergy present4.png" \
   "huawei.png" "huawei present.png" \
   "ตัวอย่างการติดตั้งบนหลังคา.jpg"; do
-  [ -f "$PIC_SRC/$f" ] && curl -s --ftp-create-dirs -T "$PIC_SRC/$f" "$PIC_DEST/$f" || true
+  [ -f "$PIC_SRC/$f" ] && "${CURLF[@]}" --ftp-create-dirs -T "$PIC_SRC/$f" "$PIC_DEST/$f" || true
 done
 echo "  ✓ Images uploaded"
 
@@ -127,7 +128,7 @@ verify_file() {
   local local_sha remote_sha tmp
   local_sha=$(sha1sum "$local_path" | cut -d' ' -f1)
   tmp=$(mktemp)
-  if curl -s -o "$tmp" "$remote_url" 2>/dev/null; then
+  if "${CURLF[@]}" -o "$tmp" "$remote_url" 2>/dev/null; then
     remote_sha=$(sha1sum "$tmp" | cut -d' ' -f1)
   else
     remote_sha="DOWNLOAD_FAILED"
