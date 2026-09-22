@@ -153,6 +153,7 @@ module.exports = function createPythonBridge(opts) {
         items: data.items,
         output_path: outPath,
         notes: data.notes || '',
+        bom_meta: data.bom_meta || null,
         cost_summary: srpPassthrough ? data.cost_summary : {
           equipment_total: tc,
           vat_7pct: Math.round(vat),
@@ -328,12 +329,17 @@ module.exports = function createPythonBridge(opts) {
     });
   }
 
+  function getCatalogStatus() {
+    return srpCalcBom({ action: 'catalog_status' });
+  }
+
   return {
     QSOLAR_SCRIPT: QSOLAR_SCRIPT,
     BOMSOLAR_SCRIPT: BOMSOLAR_SCRIPT,
     generateBomPdf: generateBomPdf,
     generateQuotationPdf: generateQuotationPdf,
     srpCalcBom: srpCalcBom,
+    getCatalogStatus: getCatalogStatus,
     init: function() {},
     shutdown: function() {},
   };

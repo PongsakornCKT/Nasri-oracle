@@ -113,8 +113,27 @@ function buildBomResultFlex(d) {
   if (panelBrand || panelWatt) specParts.push('\u0e41\u0e1c\u0e07: ' + (panelBrand ? panelBrand + ' ' : '') + (panelWatt ? panelWatt + 'W' : '') + (panelQty ? ' \u00d7 ' + panelQty : ''));
   if (inverterBrand || systemKw) specParts.push('Inverter: ' + (inverterBrand ? inverterBrand + ' ' : '') + (systemKw ? systemKw + 'kW' : ''));
   if (phase) specParts.push('Phase: ' + phase);
-  
-  if (specParts.length > 0) {
+
+  if (d.bom_meta) {
+    var meta = d.bom_meta;
+    var n2Parts = [];
+    var sysTitle = meta.package_label || meta.system || 'ATMOCE';
+    n2Parts.push('ระบบ ' + sysTitle);
+    if (meta.panels > 0 || meta.kwp > 0) {
+      n2Parts.push((meta.panels || 0) + ' แผง ' + (meta.kwp || 0) + ' kWp');
+    }
+    var invSku = meta.inverter_sku || inverterBrand || 'ไมโคร/อินเวอร์เตอร์';
+    var invCount = meta.inverter_count !== undefined ? meta.inverter_count : 1;
+    var kwAc = meta.kw_ac !== undefined ? meta.kw_ac : 0;
+    n2Parts.push(invSku + ' ×' + invCount + ' = ' + kwAc + ' kW AC');
+    if (meta.phase) {
+      n2Parts.push('เฟส ' + meta.phase);
+    }
+    if (meta.package_label) {
+      n2Parts.push('[' + meta.package_label + ']');
+    }
+    bodyRows.push({ type: 'text', text: n2Parts.join(' · '), size: 'xs', color: '#555555', margin: 'xs', wrap: true });
+  } else if (specParts.length > 0) {
     bodyRows.push({ type: 'text', text: specParts.join(' | '), size: 'xs', color: '#555555', margin: 'xs', wrap: true });
   } else if (systemKw > 0) {
     bodyRows.push({ type: 'text', text: '\u0e02\u0e19\u0e32\u0e14\u0e23\u0e30\u0e1a\u0e1a ' + systemKw + ' kWp', size: 'xs', color: '#666666', margin: 'xs' });
@@ -185,6 +204,30 @@ function buildBomResultFlex(d) {
       ]
     }] : [])
   });
+
+  if (d.bom_meta) {
+    if (d.bom_meta.has_missing_price && d.bom_meta.missing_items && d.bom_meta.missing_items.length > 0) {
+      bodyRows.push({
+        type: 'text',
+        text: '⚠️ ไม่มีราคาในชีต: ' + d.bom_meta.missing_items.join(', '),
+        size: 'xs',
+        color: '#c62828',
+        weight: 'bold',
+        margin: 'sm',
+        wrap: true
+      });
+    }
+    if (d.bom_meta.synced_at_thai) {
+      bodyRows.push({
+        type: 'text',
+        text: '📌 ราคาจากชีตราคากลาง survey ณ ' + d.bom_meta.synced_at_thai,
+        size: 'xxs',
+        color: '#666666',
+        margin: 'sm',
+        wrap: true
+      });
+    }
+  }
 
   // Requirement B5: Action Buttons
   return {

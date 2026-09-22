@@ -13,9 +13,11 @@ import sys
 import json
 import os
 
+import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from srp_calculator import calculate_bom_n2, calculate_atmoce_bom_n1
+from survey_catalog import fetch_pricelist
 
 
 def main() -> None:
@@ -25,6 +27,40 @@ def main() -> None:
     try:
         args = json.loads(sys.argv[1])
         action = args.get("action", "bom_n2")
+
+        if action == "catalog_status":
+            try:
+                raw = fetch_pricelist()
+                updated_str = raw.get("updated") or ""
+                synced_at_thai = ""
+                synced_at_ts = None
+                if updated_str:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.strptime(updated_str, "%Y-%m-%d %H:%M:%S")
+                        synced_at_thai = dt.strftime("%d/%m/%Y %H:%M:%S")
+                        synced_at_ts = dt.timestamp()
+                    except Exception:
+                        synced_at_thai = str(updated_str)
+                age_sec = int(time.time() - synced_at_ts) if synced_at_ts else 0
+                res = {
+                    "ok": True,
+                    "synced_at_thai": synced_at_thai,
+                    "age_sec": max(0, age_sec),
+                    "base_url_set": bool(os.environ.get("SURVEY_BASE_URL")),
+                    "key_set": bool(os.environ.get("LF_SURVEY_API_KEY")),
+                }
+            except Exception as exc:
+                res = {
+                    "ok": False,
+                    "error": str(exc),
+                    "synced_at_thai": "",
+                    "age_sec": 0,
+                    "base_url_set": bool(os.environ.get("SURVEY_BASE_URL")),
+                    "key_set": bool(os.environ.get("LF_SURVEY_API_KEY")),
+                }
+            print(json.dumps(res, ensure_ascii=False))
+            return
 
         if action == "atmoce_n1":
             res = calculate_atmoce_bom_n1(

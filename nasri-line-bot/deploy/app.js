@@ -189,6 +189,47 @@ var QSOLAR_SCRIPT = _pythonBridge.QSOLAR_SCRIPT;
 var generateBomPdf = _pythonBridge.generateBomPdf;
 var generateQuotationPdf = _pythonBridge.generateQuotationPdf;
 var srpCalcBom = _pythonBridge.srpCalcBom;
+var getCatalogStatus = _pythonBridge.getCatalogStatus;
+
+var _catalogStatusCache = null;
+var _catalogStatusCacheTs = 0;
+var CATALOG_STATUS_CACHE_TTL = 10 * 60 * 1000;
+
+async function getSurveyCatalogStatus() {
+  var now = Date.now();
+  if (_catalogStatusCache && (now - _catalogStatusCacheTs < CATALOG_STATUS_CACHE_TTL)) {
+    return _catalogStatusCache;
+  }
+  try {
+    var timeoutPromise = new Promise(function(_, reject) {
+      setTimeout(function() { reject(new Error('catalog_status timeout > 1.5s')); }, 1500);
+    });
+    var statusPromise = _pythonBridge.getCatalogStatus();
+    var res = await Promise.race([statusPromise, timeoutPromise]);
+    if (res) {
+      _catalogStatusCache = res;
+      _catalogStatusCacheTs = now;
+      return res;
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: err.message || String(err),
+      synced_at_thai: '',
+      age_sec: 0,
+      base_url_set: !!process.env.SURVEY_BASE_URL,
+      key_set: !!process.env.LF_SURVEY_API_KEY
+    };
+  }
+  return {
+    ok: false,
+    error: 'Unknown error',
+    synced_at_thai: '',
+    age_sec: 0,
+    base_url_set: !!process.env.SURVEY_BASE_URL,
+    key_set: !!process.env.LF_SURVEY_API_KEY
+  };
+}
 
 // Pre-spawn persistent Python workers (no-op in spawn mode)
 _pythonBridge.init();
@@ -1056,6 +1097,22 @@ async function parseSystemSpec(text) {
         });
 
         resItems._summaryText = pyRes.summary_text;
+        resItems._bomMeta = {
+          system: pyRes.system,
+          phase: pyRes.phase,
+          panels: pyRes.panels,
+          kwp: pyRes.kwp,
+          kw_ac: pyRes.kw_ac,
+          total_cost: pyRes.total_cost,
+          sale_price: pyRes.sale_price,
+          has_missing_price: pyRes.has_missing_price,
+          missing_items: pyRes.missing_items,
+          package_label: pyRes.package_label,
+          synced_at_thai: pyRes.synced_at_thai,
+          ratio: pyRes.ratio,
+          inverter_sku: pyRes.inverter_sku,
+          inverter_count: pyRes.inverter_count
+        };
         return resItems;
       }
     } catch (e) {
@@ -2720,6 +2777,7 @@ async function startBom(ev, specText) {
       _trace.path.push('spec-items:' + (autoItems ? autoItems.length : 0));
       if (Array.isArray(autoItems) && autoItems.length > 0) {
         sess.data.items = autoItems;
+        sess.data.bom_meta = autoItems._bomMeta || null;
         sess.step = 'done';
         saveBom(k, sess.data, ev.source).catch(function(e) { console.error('[bom]', e); });
         // Register as lastBom so "ขอ pdf" button works immediately
@@ -2779,6 +2837,7 @@ async function bomMsg(ev) {
           return true;
         }
         if (Array.isArray(specItems) && specItems.length > 0) {
+          s.data.bom_meta = specItems._bomMeta || null;
           specItems.forEach(function(it) { s.data.items.push(it); });
           await rText(rt, '📊 เพิ่ม ' + specItems.length + ' รายการจาก catalog\n\n' + specItems.map(function(it, i) { return '  ' + (i+1) + '. ' + it.part_name + ' x' + it.quantity + ' ฿' + it.total_cost.toLocaleString(); }).join('\n') + '\n\nรวม ' + s.data.items.length + ' รายการ | เพิ่มอีก หรือ "เสร็จ"');
           return true;
@@ -2937,6 +2996,7 @@ async function handleText(ev) {
             project_address: '',
             order_date: new Date().getDate() + '/' + (new Date().getMonth() + 1) + '/' + (new Date().getFullYear() % 100),
             items: bomItems,
+            bom_meta: bomItems._bomMeta || null,
             notes: '',
           };
           // ATMOCE SRP: attach cost_summary so generateBomPdf uses generate_srp_pdf
@@ -3671,10 +3731,11 @@ var server = http.createServer(async function(req, res) {
 
   // Health
   if (method === 'GET' && url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
     var bomCount = 0, qtCount = 0;
     try { bomCount = loadBomIndex().boms.length; } catch (e) { /* ignore */ }
     try { qtCount = loadQtIndex().quotations.length; } catch (e) { /* ignore */ }
+    var surveyCatalog = await getSurveyCatalogStatus();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
       service: 'nasri-line-bot',
@@ -3682,6 +3743,7 @@ var server = http.createServer(async function(req, res) {
       bom_count: bomCount,
       qt_count: qtCount,
       rate_limit: { qt_per_day: RATE_LIMIT_MAX_QT, bom_per_day: RATE_LIMIT_MAX_BOM },
+      survey_catalog: surveyCatalog,
       ts: new Date().toISOString(),
     }));
     return;

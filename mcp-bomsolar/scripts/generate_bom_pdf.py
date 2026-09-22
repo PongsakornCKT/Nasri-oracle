@@ -267,7 +267,26 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
         logo = Paragraph('', styles['ThaiNormal'])
     
     # Title
-    title = Paragraph('รายการวัสดุ ENERVIA GROUP', styles['ThaiTitle'])
+    if bom_data.get('bom_meta'):
+        meta = bom_data.get('bom_meta')
+        meta_sys = meta.get('package_label') or meta.get('system') or 'ATMOCE'
+        panels = meta.get('panels', 0)
+        kwp = meta.get('kwp', 0)
+        inv_sku = meta.get('inverter_sku') or 'Micro/Inverter'
+        inv_count = meta.get('inverter_count', 1)
+        kw_ac = meta.get('kw_ac', 0)
+        phase = meta.get('phase', '1P')
+        pkg = meta.get('package_label')
+        pkg_str = f" · [{pkg}]" if pkg else ""
+        meta_str = f"ระบบ {meta_sys} · {panels} แผง {kwp} kWp · {inv_sku} ×{inv_count} = {kw_ac} kW AC · เฟส {phase}{pkg_str}"
+        
+        title = [
+            Paragraph('รายการวัสดุ ENERVIA GROUP', styles['ThaiTitle']),
+            Spacer(1, 1*mm),
+            Paragraph(meta_str, ParagraphStyle('ThaiMetaSub', parent=styles['ThaiSubtitle'], alignment=TA_CENTER, textColor=COLORS['primary'], fontSize=10, fontName=FONT_BOLD))
+        ]
+    else:
+        title = Paragraph('รายการวัสดุ ENERVIA GROUP', styles['ThaiTitle'])
     
     # Header table (Logo + Title)
     header_table = Table(
@@ -514,6 +533,11 @@ def generate_bom_pdf(bom_data, output_path, logo_path=None):
 
         cost_table.setStyle(TableStyle(cs_style))
         story.append(cost_table)
+
+    if bom_data.get('bom_meta') and bom_data['bom_meta'].get('synced_at_thai'):
+        synced_at_str = bom_data['bom_meta']['synced_at_thai']
+        story.append(Spacer(1, 3*mm))
+        story.append(Paragraph(f"📌 ราคาจากชีตราคากลาง survey ณ {synced_at_str}", ParagraphStyle('ThaiMetaFooter', parent=styles['ThaiSmall'], alignment=TA_RIGHT, textColor=COLORS['gray'], fontSize=9)))
 
     # Build PDF
     doc.build(story)

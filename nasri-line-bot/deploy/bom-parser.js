@@ -164,6 +164,23 @@ function parseBomRequest(text) {
 
   // --- ATMOCE ---
   if (invBrand === 'ATMOCE') {
+    var isAcCoupling = /ac\s*coupling|atmoce_ac|ac[-_]coupling/i.test(lo);
+    if (isAcCoupling) {
+      return {
+        action: 'bom_n2',
+        system: 'atmoce_ac',
+        isCI: false,
+        panels: 0,
+        kw: 0,
+        phase: phase,
+        roof_type: roofType,
+        trunk_cable_length: '2.5',
+        battery_kwh: battKwh > 0 ? battKwh : 7,
+        backup: wantBackup,
+        warr: warr
+      };
+    }
+
     // Detect C&I: ≥30kW or explicit C&I keyword
     var isCI = effectiveKw >= 30 || /c&i|c\si|commercial|โรงงาน/i.test(lo);
 
