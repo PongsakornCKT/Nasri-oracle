@@ -4219,10 +4219,13 @@ function archiveOldBoms() {
 
 // Run archive check on startup and every 24 hours
 archiveOldBoms();
-setInterval(archiveOldBoms, 24 * 60 * 60 * 1000);
+var _archiveTimer = setInterval(archiveOldBoms, 24 * 60 * 60 * 1000);
+if (_archiveTimer.unref) _archiveTimer.unref();
 
 // Cleanup expired sessions
-setInterval(function() {
+var _sessionTimer = setInterval(function() {
   var now = Date.now();
   sessions.forEach(function(s, k) { if (now - s.up > TIMEOUT) sessions.delete(k); });
 }, 5 * 60 * 1000);
+if (_sessionTimer.unref) _sessionTimer.unref();
+

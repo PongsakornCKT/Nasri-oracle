@@ -1,7 +1,8 @@
 /**
- * BOM Parser Unit Test Suite (#N2 Round 2)
+ * BOM Parser Unit Test Suite (#N2 Round 2 / r6)
  * Tests parser payload generation & quick reply routing against real user inputs.
  */
+require('./env.stub.cjs');
 
 var parser = require('../deploy/bom-parser');
 
@@ -29,7 +30,6 @@ test('1. "bom atmoce 40kw 3phase" detects C&I system',
 var p2 = parser.parseBomRequest('bom atmoce 10 แผง 2:1 แบต 7 backup ประกัน 25 ปี');
 test('2. "bom atmoce 10 แผง 2:1 แบต 7 backup ประกัน 25 ปี" parses battery, backup, and warranty',
   p2.action === 'bom_n2' && p2.system === 'atmoce21' && p2.panels === 10 &&
-
   p2.battery_kwh === 7 && p2.backup === true && p2.warr === 'p10');
 
 // 3. ATMOCE without ratio -> ratio quick reply
@@ -59,4 +59,4 @@ test('7. "bom sigenergy neo 10 แผง" parses sigenneo system',
   p7.action === 'bom_n2' && p7.system === 'sigenneo' && p7.panels === 10);
 
 console.log('\n=== Results: ' + passed + '/' + (passed + failed) + ' passed ===');
-if (failed) process.exit(1);
+process.exit(failed > 0 ? 1 : 0);
