@@ -2200,7 +2200,7 @@ var server = http.createServer(async function(req, res) {
   res.end('{"error":"Not found"}');
 });
 
-if (require.main === module) {
+if (!process.env.NASRI_NO_LISTEN) { // Passenger require()s app.js (require.main !== module) — ต้อง listen เสมอ ยกเว้นเทสตั้ง NASRI_NO_LISTEN=1 (hotfix 2026-09-22)
   var port = (typeof PhusionPassenger !== 'undefined') ? 'passenger' : (process.env.PORT || 3000);
   server.listen(port, function() {
     console.log('🏠 Nasri LINE Bot listening on ' + port);
@@ -2275,7 +2275,7 @@ function archiveOldBoms() {
 }
 
 // Run archive check and session cleanup timers (only when running as main module)
-if (require.main === module) {
+if (!process.env.NASRI_NO_LISTEN) { // Passenger require()s app.js (require.main !== module) — ต้อง listen เสมอ ยกเว้นเทสตั้ง NASRI_NO_LISTEN=1 (hotfix 2026-09-22)
   archiveOldBoms();
   setInterval(archiveOldBoms, 24 * 60 * 60 * 1000);
 

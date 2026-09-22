@@ -4,6 +4,7 @@
  */
 
 console.log('=== App Load Test Suite (N2 Round 3) ===\n');
+process.env.NASRI_NO_LISTEN = '1'; // Passenger-safe: app.js listens unless this is set (hotfix 2026-09-22)
 
 try {
   require('../deploy/app.js');
