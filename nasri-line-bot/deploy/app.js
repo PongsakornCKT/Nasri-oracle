@@ -572,6 +572,44 @@ function buildAtmoceQuickReply(origText) {
   };
 }
 
+function buildSigenergyQuickReply(originalText) {
+  var cleanText = String(originalText || '').trim();
+  if (!cleanText) cleanText = 'sigenergy';
+
+  return {
+    type: 'text',
+    text: 'กรุณาเลือกระบบ Sigenergy ที่ต้องการคำนวณ BOM ครับ ⚡:\n• 5 in 1 = ระบบ 5 in 1 Resi\n• SigenStor Neo = ระบบ SigenStor Neo\n• Sigenergy C&I = ระบบ C&I ภาคอุตสาหกรรม',
+    quickReply: {
+      items: [
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: '5 in 1',
+            text: cleanText + ' 5in1'
+          }
+        },
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: 'SigenStor Neo',
+            text: cleanText + ' neo'
+          }
+        },
+        {
+          type: 'action',
+          action: {
+            type: 'message',
+            label: 'Sigenergy C&I',
+            text: cleanText + ' c&i'
+          }
+        }
+      ]
+    }
+  };
+}
+
 function callBomsolarCli(payload) {
   return new Promise(function(resolve, reject) {
     var cp = require('child_process');
@@ -716,33 +754,60 @@ async function parseSystemSpec(text) {
         return { isSurveyError: true, errorMsg: e.message };
       }
     } else if (invBrand === 'Sigenergy') {
-      // Sigenergy: search EC inverters by phase suffix + kW from รายละเอียด
-      var phaseSuffix = phase === '1P' ? 'SP' : 'TP';
-      var ecRows = invRows.filter(function(r) {
-        var vals = Object.values(r).join(' ');
-        return vals.indexOf('Inverter (EC)') >= 0 && vals.indexOf(phaseSuffix) >= 0;
-      });
-      if (!ecRows.length) {
-        // Fallback to Hybrid
-        ecRows = invRows.filter(function(r) {
-          var vals = Object.values(r).join(' ');
-          return vals.indexOf('Hybrid') >= 0 && vals.indexOf(phaseSuffix) >= 0;
-        });
+      var isSigSubtypeSpecified = /5in1|5\s*in\s*1|neo|c&i|ci\b/i.test(lo);
+      if (!isSigSubtypeSpecified) {
+        return { isSigenergyQuickReply: true, quickReplyMsg: buildSigenergyQuickReply(text) };
       }
-      var bestInv = null, bestDiff = 9999;
-      ecRows.forEach(function(r) {
-        var detail = r['รายละเอียด'] || Object.values(r)[2] || '';
-        var m = detail.match(/([\d.]+)\s*kW/i);
-        if (m) {
-          var diff = Math.abs(parseFloat(m[1]) - systemKw);
-          if (diff < bestDiff) { bestDiff = diff; bestInv = r; }
+
+      var sysSubtype = 'sigenergy5in1';
+      if (/neo/i.test(lo)) sysSubtype = 'sigenneo';
+      else if (/c&i|ci\b/i.test(lo)) sysSubtype = 'sigenci';
+
+      var cRate = /0\.5c/i.test(lo) ? '0.5C' : '1C';
+
+      var panelCount = 0;
+      var pcm = text.match(/(\d+)\s*แผ[งง่]/);
+      if (pcm) {
+        panelCount = parseInt(pcm[1]);
+      } else {
+        var kwm = lo.match(/(\d+(?:\.\d+)?)\s*kw/);
+        var kw = kwm ? parseFloat(kwm[1]) : systemKw;
+        panelCount = Math.ceil(kw * 1000 / 650);
+      }
+      if (panelCount <= 0 && sysSubtype !== 'sigenci') panelCount = 16;
+
+      try {
+        var pyRes = await callBomsolarCli({
+          action: 'bom_n2',
+          system: sysSubtype,
+          panels: panelCount,
+          kw: systemKw,
+          phase: phase,
+          roof_type: roofType,
+          battery_kwh: battKwh,
+          backup: wantBackup,
+          c_rate: cRate
+        });
+
+        if (pyRes && pyRes.items) {
+          var resItems = pyRes.items.map(function(i) {
+            return {
+              part_number: i.part_number,
+              part_name: i.part_name,
+              manufacturer: i.manufacturer,
+              category: i.category,
+              quantity: i.quantity,
+              unit: i.unit,
+              unit_cost: i.unit_cost !== null ? i.unit_cost : 0,
+              total_cost: i.total_cost !== null ? i.total_cost : 0,
+              notes: i.notes || ''
+            };
+          });
+          resItems._summaryText = pyRes.summary_text;
+          return resItems;
         }
-      });
-      if (bestInv) {
-        var invPrice = extractPrice(bestInv);
-        var invModel = bestInv['รุ่น (Model)'] || extractField(bestInv, ['รุ่น', 'model']) || 'SigenStor EC ' + systemKw + 'kW';
-        var invDetail = bestInv['รายละเอียด'] || '';
-        items.push({ part_number: invModel, part_name: invModel + (invDetail ? ' (' + invDetail + ')' : ''), manufacturer: 'Sigenergy', category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: '' });
+      } catch (e) {
+        return { isSurveyError: true, errorMsg: e.message };
       }
     } else {
       // Inverter Design Engine — handles exact match + smart combinations

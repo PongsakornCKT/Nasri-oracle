@@ -55,26 +55,27 @@ def get_survey_api_key() -> str:
     return os.environ.get("LF_SURVEY_API_KEY", "").strip()
 
 
-def fetch_pricelist(force: bool = False) -> Dict[str, Any]:
+def fetch_pricelist(force: bool = False, fixture_filename: str = "pricelist_fixture.json") -> Dict[str, Any]:
     """
     Fetch /pricelist from Survey REST API with 10-minute caching.
-    If LF_BOM_FIXTURE_MODE=1, load from local pricelist_fixture.json.
+    If LF_BOM_FIXTURE_MODE=1, load from local pricelist_fixture.json (or specified fixture_filename).
     Otherwise, if API key missing or API fails, raise SurveyUnavailable.
     """
     now = time.time()
+    cache_key = f"pricelist:{fixture_filename}"
     if is_fixture_mode():
-        fixture_path = FIXTURE_DIR / "pricelist_fixture.json"
+        fixture_path = FIXTURE_DIR / fixture_filename
         if not fixture_path.exists():
-            raise SurveyUnavailable("ไม่มี fixture file (pricelist_fixture.json)")
+            raise SurveyUnavailable(f"ไม่มี fixture file ({fixture_filename})")
         try:
             raw = json.loads(fixture_path.read_text(encoding="utf-8"))
-            _CACHE["pricelist"] = {"data": raw, "ts": now}
+            _CACHE[cache_key] = {"data": raw, "ts": now}
             return raw
         except Exception as e:
             raise SurveyUnavailable(f"อ่าน fixture ไม่สำเร็จ: {e}")
 
-    if not force and "pricelist" in _CACHE:
-        entry = _CACHE["pricelist"]
+    if not force and cache_key in _CACHE:
+        entry = _CACHE[cache_key]
         if now - entry["ts"] < CACHE_TTL:
             return entry["data"]
 
@@ -226,6 +227,8 @@ def parse_pricelist_catalog(tabs: Dict[str, List[Any]]) -> Dict[str, Any]:
         p6 = _cpl_num(r[6]) if len(r) > 6 else None
         p5 = _cpl_num(r[5]) if len(r) > 5 else None
         price = p6 if p6 is not None else p5
+        if price is not None and ("ม้วน" in unit or "100m" in model.lower() or "100m" in detail.lower()):
+            price = round(price / 100.0, 4)
 
         full_name = f"{brand} {model}".strip()
         catalog["cables"][full_name] = {
@@ -290,6 +293,31 @@ def parse_pricelist_catalog(tabs: Dict[str, List[Any]]) -> Dict[str, Any]:
             "detail": detail,
             "cost": cost,
             "unit": unit,
+        }
+
+    # 7. Inverters - Sigenergy (r[0] category, r[1] model, r[2] detail, r[3] sku, r[4] cost, r[5] sale)
+    # Rule 3: Header: หมวด, รุ่น (Model), รายละเอียด, SKU, ราคาสั่งซื้อ r[4], ราคาขาย r[5]
+    catalog["sigenergy_items"] = {}
+    rows_sigenergy = tabs.get("Inverters - Sigenergy", [])
+    for r in rows_sigenergy:
+        if not isinstance(r, list) or not r:
+            continue
+        c0 = str(r[0] if len(r) > 0 and r[0] is not None else "").strip()
+        if not c0 or c0.startswith("⚡") or c0 == "หมวด":
+            continue
+        model = str(r[1] if len(r) > 1 and r[1] is not None else "").strip()
+        if not model:
+            continue
+        detail = str(r[2] if len(r) > 2 and r[2] is not None else "").strip()
+        cost = _cpl_num(r[4]) if len(r) > 4 else None
+        sale = _cpl_num(r[5]) if len(r) > 5 else None
+
+        catalog["sigenergy_items"][model] = {
+            "category": c0,
+            "model": model,
+            "detail": detail,
+            "cost": cost,
+            "sale": sale,
         }
 
     return catalog
