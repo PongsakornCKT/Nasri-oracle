@@ -206,9 +206,14 @@ module.exports = function createArchiveApi(opts) {
       if (!found) { json(res, 404, { error: 'not_found', id: id }); return true; }
       var file = path.join(DOC_DIR, found.filename);
       if (!fs.existsSync(file)) { json(res, 404, { error: 'file_missing', path: found.filename }); return true; }
+      // RFC 5987: support Thai/UTF-8 filenames in Content-Disposition.
+      // ASCII filename= is fallback for ancient clients; filename*=UTF-8'' is read by modern browsers.
+      var rawArchFn = path.basename(found.filename);
+      var asciiArchFn = rawArchFn.replace(/[^\w\-.]/g, '_');
+      var encArchFn = encodeURIComponent(rawArchFn);
       res.writeHead(200, {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': 'inline; filename="' + found.filename + '"',
+        'Content-Disposition': 'inline; filename="' + asciiArchFn + '"; filename*=UTF-8\'\'' + encArchFn,
         'Cache-Control': 'private, max-age=300',
       });
       fs.createReadStream(file).pipe(res);

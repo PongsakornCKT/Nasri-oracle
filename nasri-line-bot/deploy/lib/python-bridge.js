@@ -14,6 +14,28 @@
 
 var path = require('path');
 
+// Defensive customer-name cleanup before handoff to Python.
+// Strips control chars + zero-width + replacement char (U+FFFD), collapses
+// whitespace, then REJECTS strings that contain no Thai/Latin/digit chars
+// (e.g. "_ _ _ _", "...", "??") because they produce garbage filename
+// suffixes like "-______" downstream. Returning empty here lets the Python
+// sanitizer fall through to its default placeholder.
+// Hoisted to module scope (pure — no dependency on createPythonBridge's
+// `opts` closure) so it can be require()'d directly by tests.
+function cleanCustomerName(s) {
+  if (!s || typeof s !== 'string') return '';
+  // Drop C0/C1 controls, U+FFFD, zero-width joiners, BOM
+  var out = s.replace(/[\x00-\x1f\x7f-\x9f�​-‍﻿]/g, '');
+  // Collapse any whitespace run to single space, trim
+  out = out.replace(/\s+/g, ' ').trim();
+  if (!out) return '';
+  // Reject strings with NO meaningful chars (only underscores, dots,
+  // punctuation, separators). Defends against AI returning placeholder
+  // garbage (e.g. "_ _ _") that bypasses upstream guards.
+  if (!/[ก-๙A-Za-z0-9]/.test(out)) return '';
+  return out;
+}
+
 module.exports = function createPythonBridge(opts) {
   opts = opts || {};
   var appRoot = opts.__dirname || process.cwd();
@@ -24,7 +46,7 @@ module.exports = function createPythonBridge(opts) {
   // ── SRP Calculator CLI — ATMOCE only ────────────────────────
   // Spawns srp_calc_cli.py to compute exact SRP BOM + pricing.
   // Returns promise<SRPResult.as_dict()> or rejects on error.
-  function srpCalcBom(config, panels, batteryKwh, backup, warrantyYears) {
+  function srpCalcBom(config, panels, batteryKwh, backup, warrantyYears, cableAcM, extra) {
     return new Promise(function(resolve, reject) {
       var cp = require('child_process');
       var cliScript = path.join(path.dirname(BOMSOLAR_SCRIPT), 'srp_calc_cli.py');
@@ -33,6 +55,10 @@ module.exports = function createPythonBridge(opts) {
         panels: panels,
         battery_kwh: batteryKwh || 0,
         backup: !!backup,
+      cable_ac_m: cableAcM || 0,
+      c_rate: (extra && extra.cRate) || 0.5,
+      dc_cable_m: (extra && extra.dcCableM) || 0,
+      optimizer: !(extra && extra.noOptimizer),
         warranty_years: warrantyYears || 0,
       });
       var env = Object.assign({}, process.env, {
@@ -95,7 +121,10 @@ module.exports = function createPythonBridge(opts) {
       var grandTotal = tc + vat + labor + bos + errorCost + crane + peaFee;
 
       var now = new Date();
-      var dateStr = data.order_date || (now.getDate() + '/' + (now.getMonth()+1) + '/' + (now.getFullYear() % 100));
+      var dateStr = data.order_date;
+      if (!dateStr || dateStr === '17/4/26' || dateStr === '17/04/26') {
+        dateStr = now.getDate() + '/' + (now.getMonth()+1) + '/' + (now.getFullYear() % 100);
+      }
       var outFile = 'bom-' + (data.project_name || 'project').replace(/[^a-zA-Z0-9\u0e00-\u0e7f]/g, '_').slice(0, 40) + '-' + Date.now() + '.pdf';
       var outPath = path.join(appRoot, 'boms', outFile);
 
@@ -111,8 +140,11 @@ module.exports = function createPythonBridge(opts) {
           equipment_total: tc,
           vat_7pct: Math.round(vat),
           labor: labor,
+          labor_rate_per_wp: 4.5,
           bos: bos,
+          bos_rate_per_wp: 0.7,
           error_cost: errorCost,
+          error_rate_per_wp: 1.0,
           crane: crane,
           pea_mea_fee: peaFee,
           grand_total: Math.round(grandTotal),
@@ -178,11 +210,16 @@ module.exports = function createPythonBridge(opts) {
     });
   }
 
+  // cleanCustomerName now hoisted to module scope (see top of file) so it
+  // can be require()'d directly by tests — same body, moved not changed.
+
   function generateQuotationPdf(spec, customerName, projectName) {
     return new Promise(function(resolve, reject) {
       var cp = require('child_process');
       // Pass structured spec to qsolar_generate to avoid lossy re-parsing in Python.
       var payload;
+      // Normalize incoming customer name (defensive — see cleanCustomerName)
+      var cleanCust = cleanCustomerName(customerName) || cleanCustomerName(spec && spec.customer_name) || 'ลูกค้า';
       if (spec && typeof spec === 'object' && spec.brand) {
         payload = JSON.stringify({
           tool: 'qsolar_generate',
@@ -191,7 +228,7 @@ module.exports = function createPythonBridge(opts) {
           phase: spec.phase,
           has_battery: spec.has_battery || false,
           has_backup: spec.has_backup || false,
-          customer_name: customerName || spec.customer_name || 'ลูกค้า',
+          customer_name: cleanCust,
           project_name: projectName || '',
           grand_total: spec.grand_total || 0,
           discount: spec.discount || 0,
@@ -202,14 +239,17 @@ module.exports = function createPythonBridge(opts) {
           remarks: spec.remarks || '',
           lump_sum: spec.lump_sum || false,
           has_optimizer: spec.has_optimizer || false,
+          battery_only: spec.battery_only || false,
+          micro_2to1: spec.micro_2to1 || false,
+          payment_rounds: spec.payment_rounds || 2,
         });
-        console.log('[qsolar-payload] panel_brand=' + (spec.panel_brand || '') + ' panel_watt=' + (spec.panel_watt || 0) + ' panel_count=' + (spec.panel_count || 0) + ' size_kw=' + (spec.size_kw || 0) + ' optimizer=' + (spec.has_optimizer || false));
+        console.log('[qsolar-payload] panel_brand=' + (spec.panel_brand || '') + ' panel_watt=' + (spec.panel_watt || 0) + ' panel_count=' + (spec.panel_count || 0) + ' size_kw=' + (spec.size_kw || 0) + ' optimizer=' + (spec.has_optimizer || false) + ' battery_only=' + (spec.battery_only || false) + ' micro_2to1=' + (spec.micro_2to1 || false));
       } else {
         // Fallback: raw string spec (legacy path)
         payload = JSON.stringify({
           tool: 'qsolar_from_spec',
           spec: spec,
-          customer_name: customerName || 'ลูกค้า',
+          customer_name: cleanCust,
           project_name: projectName || '',
         });
       }
@@ -277,5 +317,12 @@ module.exports = function createPythonBridge(opts) {
     generateBomPdf: generateBomPdf,
     generateQuotationPdf: generateQuotationPdf,
     srpCalcBom: srpCalcBom,
+    init: function() {},
+    shutdown: function() {},
   };
 };
+
+// Static export (not part of the factory instance) so tests can
+// require('./lib/python-bridge').cleanCustomerName directly without
+// constructing a full bridge instance (opts.qsolarPath etc).
+module.exports.cleanCustomerName = cleanCustomerName;

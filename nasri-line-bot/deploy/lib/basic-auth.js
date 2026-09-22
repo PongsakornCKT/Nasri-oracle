@@ -115,10 +115,12 @@ module.exports = function createBasicAuth(opts) {
     var url = req.url || '';
     if (!isProtected(url)) return true;       // public path → pass
 
-    // Auth not configured → open (dev/preview bypass, log warning)
+    // sobek P02: fail-closed — auth not configured = deny, never bypass.
     if (!USER || (!PASS_HASH && !PASS_PLAIN)) {
-      audit('BYPASS url=' + url + ' (auth not configured)');
-      return true;
+      audit('DENY url=' + url + ' (auth not configured — fail-closed)');
+      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'auth_not_configured' }));
+      return false;
     }
 
     var ip = clientIp(req);

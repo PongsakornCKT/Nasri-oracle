@@ -41,9 +41,9 @@ module.exports = function createLineApi(opts) {
     if (!h) { console.log('[dev push]', to); _trackLine('push', 'no-token', ''); return; }
     try {
       var r = await fetch(API + '/message/push', { method: 'POST', headers: h, body: JSON.stringify({ to: to, messages: msgs }) });
-      if (!r.ok) { var t = await r.text(); console.error('[LINE push]', r.status, t); _trackLine('push', r.status, 'to=' + to + ' ' + t); }
-      else { _trackLine('push', 200, 'to=' + to); }
-    } catch (e) { console.error('[LINE push] error:', e.message); _trackLine('push', 'error', e.message); }
+      if (!r.ok) { var t = await r.text(); console.error('[LINE push]', r.status, t); _trackLine('push', r.status, 'to=' + to + ' ' + t); return { ok: false, status: r.status }; }
+      else { _trackLine('push', 200, 'to=' + to); return { ok: true, status: 200 }; }
+    } catch (e) { console.error('[LINE push] error:', e.message); _trackLine('push', 'error', e.message); return { ok: false, error: e.message }; }
   }
 
   function rText(rt, t) { return lReply(rt, [{ type: 'text', text: t }]); }
