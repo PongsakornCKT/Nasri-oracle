@@ -153,6 +153,49 @@ else
 fi
 
 # ── 2. mcp-qsolar Python scripts ──────────────────────────────
+# ── 1b. lib/ — only upload files whose sha1 differs from live ──
+# Missed in the first cut: python-bridge.js (and any other lib/*.js) was
+# never in the upload list, so a git-side fix could sit on live forever
+# while app.js moved on and called into the old bridge (2026-09-22 17:50
+# incident — ATMOCE/Sigenergy BOM lines broke on a healthy /health).
+echo "📚 Checking nasri-line-bot/deploy/lib/*.js against live..."
+LIB_DIR="$DEPLOY_DIR/lib"
+LIB_DEST="$FTP/ai.enervia.co.th/lib"
+LIB_SAME=0
+LIB_CHANGED=()
+if [ -d "$LIB_DIR" ]; then
+  for f in "$LIB_DIR"/*.js; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    local_sha=$(sha1sum "$f" | cut -d' ' -f1)
+    tmp=$(mktemp)
+    if "${CURLF[@]}" -o "$tmp" "$LIB_DEST/$name" 2>/dev/null && [ -s "$tmp" ]; then
+      live_sha=$(sha1sum "$tmp" | cut -d' ' -f1)
+    else
+      live_sha="MISSING"
+    fi
+    rm -f "$tmp"
+    if [ "$local_sha" = "$live_sha" ]; then
+      LIB_SAME=$((LIB_SAME + 1))
+    else
+      LIB_CHANGED+=("$name")
+    fi
+  done
+fi
+if [ "${#LIB_CHANGED[@]}" -eq 0 ]; then
+  echo "  ✓ lib/: $LIB_SAME file(s) already match live, nothing to upload"
+else
+  echo "  lib/: $LIB_SAME file(s) match live, ${#LIB_CHANGED[@]} differ: ${LIB_CHANGED[*]}"
+  for name in "${LIB_CHANGED[@]}"; do
+    backup_file "$LIB_DIR/$name" "$LIB_DEST/$name" "nasri-line-bot/deploy/lib/$name"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "  (dry-run) would upload: lib/$name"
+    else
+      "${CURLF[@]}" --ftp-create-dirs -T "$LIB_DIR/$name" "$LIB_DEST/$name" && echo "  ✓ lib/$name"
+    fi
+  done
+fi
+
 echo "🐍 Backing up + uploading mcp-qsolar..."
 QSOLAR_SRC="$REPO_ROOT/mcp-qsolar"
 QSOLAR_DEST="$FTP/ai.enervia.co.th/mcp-qsolar"
@@ -284,6 +327,14 @@ verify_file() {
   fi
 }
 verify_file "$DEPLOY_DIR/bom-parser.js" "$FTP/ai.enervia.co.th/bom-parser.js" "bom-parser.js"
+
+# ── 4a2. Verify lib/ uploads (only the ones we actually pushed) ──
+if [ -d "$LIB_DIR" ] && [ "${#LIB_CHANGED[@]}" -gt 0 ]; then
+  echo "🔍 Verifying lib/ uploads..."
+  for name in "${LIB_CHANGED[@]}"; do
+    verify_file "$LIB_DIR/$name" "$LIB_DEST/$name" "lib/$name"
+  done
+fi
 
 # ── 4b. Verify mcp-bomsolar uploads (sha1 match) ─────────────
 echo "🔍 Verifying mcp-bomsolar uploads..."
