@@ -129,12 +129,16 @@ def calculate_bom_n2(
     battery_sku: Optional[str] = None,
     backup: bool = False,
     c_rate: Optional[str] = None,
+    warr: Optional[str] = None,
+    warranty_years: Optional[Any] = None,
+    melv16: bool = False,
     roof_type: str = "metal",
     rows: int = 1,
     trunk_cable_length: str = "2.5",
     catalog_data: Optional[Dict[str, Any]] = None,
     qpkg_data: Optional[Dict[str, Any]] = None,
     fixture_filename: str = "pricelist_fixture.json",
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """
     Unified BOM & Cost Breakdown Engine (N2).
@@ -255,6 +259,15 @@ def calculate_bom_n2(
                 "tab": "atmoce_inverters", "lookup_key": "MW-025020-B0"
             })
 
+        # Warranty Add-on (MI-1250-P5 / MI-1250-P10)
+        warr_val = str(warr or warranty_years or kwargs.get("warr") or kwargs.get("warranty_years") or "").strip().lower()
+        if sys_key == "atmoce21" and micro_qty > 0 and warr_val in ("p5", "p10", "20", "25", "20ปี", "25ปี"):
+            warr_sku = "MI-1250-P5" if warr_val in ("p5", "20", "20ปี") else "MI-1250-P10"
+            raw_lines.append({
+                "k": "warr", "s": "A", "n": warr_sku, "q": micro_qty, "u": "ชุด",
+                "tab": "atmoce_inverters", "lookup_key": warr_sku
+            })
+
         # Combiner Box
         comb_sku = "MC100T" if phase_norm == "3P" else ("MC100L" if panels < 9 else "MC100")
         raw_lines.append({
@@ -271,12 +284,28 @@ def calculate_bom_n2(
         })
 
         # Battery & Backup if requested
-        if battery_sku or battery_kwh > 0:
-            batt_qty = math.ceil(battery_kwh / 7.0) if battery_kwh > 0 else 1
-            raw_lines.append({
-                "k": "batt", "s": "A", "n": "MS-7K-U", "q": batt_qty, "u": "ก้อน",
-                "tab": "atmoce_inverters", "lookup_key": "MS-7K-U"
-            })
+        melv16_val = bool(melv16 or kwargs.get("melv16", False))
+        if battery_sku or battery_kwh > 0 or melv16_val:
+            if melv16_val or "16k" in str(battery_sku).lower() or battery_kwh >= 16:
+                batt_qty = math.ceil(battery_kwh / 16.0) if battery_kwh > 0 else 1
+                raw_lines.append({
+                    "k": "batt", "s": "A", "n": "MS-16k-U", "q": batt_qty, "u": "ชุด",
+                    "tab": "atmoce_inverters", "lookup_key": "MS-16k-U"
+                })
+                raw_lines.append({
+                    "k": "batt:scu", "s": "A", "n": "MS-SCU-CIN", "q": 1, "u": "ชุด",
+                    "tab": "atmoce_inverters", "lookup_key": "MS-SCU-CIN"
+                })
+                raw_lines.append({
+                    "k": "batt:accb", "s": "A", "n": "MS-ACCB-CNI", "q": 1, "u": "ชุด",
+                    "tab": "atmoce_inverters", "lookup_key": "MS-ACCB-CNI"
+                })
+            else:
+                batt_qty = math.ceil(battery_kwh / 7.0) if battery_kwh > 0 else 1
+                raw_lines.append({
+                    "k": "batt", "s": "A", "n": "MS-7K-U", "q": batt_qty, "u": "ก้อน",
+                    "tab": "atmoce_inverters", "lookup_key": "MS-7K-U"
+                })
             backup = True
 
         if backup:
@@ -970,3 +999,10 @@ def calculate_atmoce_bom_n1(
         "has_missing_price": has_missing_price,
         "missing_items": missing_items,
     }
+
+
+def calculate_srp(system: str = "atmoce21", panels: int = 10, **kwargs: Any) -> Dict[str, Any]:
+    """Legacy backward-compatibility wrapper calling calculate_bom_n2."""
+    res = calculate_bom_n2(system=system, panels=panels, **kwargs)
+    res["offer_price"] = res.get("sale_price", 0.0)
+    return res

@@ -239,3 +239,52 @@ def test_no_key_raises_survey_unavailable():
             os.environ["LF_BOM_FIXTURE_MODE"] = old_mode
         if old_key:
             os.environ["LF_SURVEY_API_KEY"] = old_key
+
+
+def test_regression_atmoce_ci_3p_60p(raw_fixture_2p5_extracts):
+    """Section 5.5 Parity: C&I 3P 60 panels with MS-16k-U battery."""
+    res = calculate_bom_n2(
+        system="atmoce21",
+        panels=60,
+        phase="3P",
+        battery_kwh=16,
+        melv16=True,
+        fixture_filename="pricelist_fixture_2p5.json",
+    )
+    assert res["success"] is True
+    line_map = {l["k"]: l for l in res["lines"]}
+    assert line_map["batt"]["n"] == "MS-16k-U"
+    assert line_map["batt:scu"]["n"] == "MS-SCU-CIN"
+    assert line_map["batt:accb"]["n"] == "MS-ACCB-CNI"
+
+
+def test_regression_atmoce21_10p_batt7_backup(raw_fixture_2p5_extracts):
+    """Section 5.5 Parity: 2:1 1P 10 panels + battery 7 kWh + backup."""
+    res = calculate_bom_n2(
+        system="atmoce21",
+        panels=10,
+        phase="1P",
+        battery_kwh=7,
+        backup=True,
+        fixture_filename="pricelist_fixture_2p5.json",
+    )
+    assert res["success"] is True
+    line_map = {l["k"]: l for l in res["lines"]}
+    assert line_map["batt"]["n"] == "MS-7K-U"
+    assert line_map["backup"]["n"] == "MU100S"
+
+
+def test_regression_atmoce21_warranty_p10(raw_fixture_2p5_extracts):
+    """Section 5.5 Parity: Micro inverter warranty P10 add-on."""
+    res = calculate_bom_n2(
+        system="atmoce21",
+        panels=10,
+        phase="1P",
+        warr="p10",
+        fixture_filename="pricelist_fixture_2p5.json",
+    )
+    assert res["success"] is True
+    line_map = {l["k"]: l for l in res["lines"]}
+    assert line_map["warr"]["n"] == "MI-1250-P10"
+    assert line_map["warr"]["q"] == 5.0
+
