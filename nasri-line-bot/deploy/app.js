@@ -543,15 +543,86 @@ function designInverters(invRows, targetKw, phase, brand) {
   return bestSingle || bestMix || [];
 }
 
+var bomParser = require('./bom-parser');
+var buildAtmoceQuickReply = bomParser.buildAtmoceQuickReply;
+var buildSigenergyQuickReply = bomParser.buildSigenergyQuickReply;
+
+function callBomsolarCli(payload) {
+  return new Promise(function(resolve, reject) {
+    var cp = require('child_process');
+    var scriptPath = path.join(__dirname, '..', 'mcp-bomsolar', 'srp_calc_cli.py');
+    if (!fs.existsSync(scriptPath)) {
+      scriptPath = path.join(__dirname, 'mcp-bomsolar', 'srp_calc_cli.py');
+    }
+    var cmd = 'python3 ' + JSON.stringify(scriptPath) + ' ' + JSON.stringify(JSON.stringify(payload));
+    cp.exec(cmd, { cwd: __dirname }, function(err, stdout, stderr) {
+      if (err) {
+        var errMessage = stderr || err.message;
+        try {
+          var parsedErr = JSON.parse((stderr || stdout).trim());
+          if (parsedErr && parsedErr.error) errMessage = parsedErr.error;
+        } catch (e) {}
+        return reject(new Error(errMessage));
+      }
+      try {
+        var res = JSON.parse(stdout.trim());
+        resolve(res);
+      } catch (e) {
+        reject(new Error('Failed to parse Python output: ' + stdout));
+      }
+    });
+  });
+}
+
 // ─── Smart System Spec Parser ────────────────────────────────
-// Parses natural language like "atmoce 5kw 1phase แผง JA625 + batt + backup"
+// Parses natural language like "atmoce 5kw 1phaseแผง JA625 + batt + backup"
 // into BOM items from the Google Sheets catalog
 
 async function parseSystemSpec(text) {
   var catalog = await getCatalog();
   if (!catalog) return [];
   var lo = text.toLowerCase();
-  var items = [];
+
+  // Detect inverter brand
+  var invBrand = '';
+  if (/atmoce/i.test(lo)) invBrand = 'ATMOCE';
+  else if (/huawei/i.test(lo)) invBrand = 'Huawei';
+  else if (/sol[io]s/i.test(lo)) invBrand = 'Solis';
+  else if (/deye/i.test(lo)) invBrand = 'Deye';
+  else if (/sig(?:energy)?/i.test(lo)) invBrand = 'Sigenergy';
+  else if (/hoymiles/i.test(lo)) invBrand = 'Hoymiles';
+  else if (/enphase/i.test(lo)) invBrand = 'Enphase';
+
+  // ── ATMOCE & Sigenergy Python Engine Integration ──
+  if (invBrand === 'ATMOCE' || invBrand === 'Sigenergy') {
+    var parsedReq = bomParser.parseBomRequest(text);
+    if (parsedReq.isAtmoceQuickReply) return { isAtmoceQuickReply: true, quickReplyMsg: parsedReq.quickReplyMsg };
+    if (parsedReq.isSigenergyQuickReply) return { isSigenergyQuickReply: true, quickReplyMsg: parsedReq.quickReplyMsg };
+    if (parsedReq.isSigenergyCiPrompt) return { isSigenergyCiPrompt: true, promptMsg: parsedReq.promptMsg };
+
+    try {
+      var pyRes = await callBomsolarCli(parsedReq);
+      if (pyRes && pyRes.items) {
+        var resItems = pyRes.items.map(function(i) {
+          return {
+            part_number: i.part_number,
+            part_name: i.part_name,
+            manufacturer: i.manufacturer,
+            category: i.category,
+            quantity: i.quantity,
+            unit: i.unit,
+            unit_cost: i.unit_cost !== null ? i.unit_cost : 0,
+            total_cost: i.total_cost !== null ? i.total_cost : 0,
+            notes: i.notes || ''
+          };
+        });
+        resItems._summaryText = pyRes.summary_text;
+        return resItems;
+      }
+    } catch (e) {
+      return { isSurveyError: true, errorMsg: e.message };
+    }
+  }
 
   // Detect system size (kW) — must come before phase detection
   var kwMatch = lo.match(/(\d+(?:\.\d+)?)\s*kw/);
@@ -565,15 +636,7 @@ async function parseSystemSpec(text) {
   else if (/1\s*(?:phase|เฟส|p\b)/i.test(text)) phase = '1P';
   else if (systemKw >= 15) phase = '3P'; // Large systems auto-upgrade to 3P
 
-  // Detect inverter brand
-  var invBrand = '';
-  if (/atmoce/i.test(lo)) invBrand = 'ATMOCE';
-  else if (/huawei/i.test(lo)) invBrand = 'Huawei';
-  else if (/sol[io]s/i.test(lo)) invBrand = 'Solis';
-  else if (/deye/i.test(lo)) invBrand = 'Deye';
-  else if (/sig(?:energy)?/i.test(lo)) invBrand = 'Sigenergy';
-  else if (/hoymiles/i.test(lo)) invBrand = 'Hoymiles';
-  else if (/enphase/i.test(lo)) invBrand = 'Enphase';
+  var items = [];
 
   // Detect panel brand + watts
   var panelBrand = '', panelWatts = 0;
@@ -607,135 +670,49 @@ async function parseSystemSpec(text) {
     var invSheet = 'Inverters - ' + invBrand;
     var invRows = catalog[invSheet] || [];
 
-    if (invBrand === 'ATMOCE') {
-      // Detect C&I: ≥30kW or explicit C&I keyword
-      var isCI = systemKw >= 30 || /c&i|c\si|commercial|โรงงาน/i.test(lo);
-      var miModel, miName, miKw, miFallbackPrice, miRow, miQty;
-      if (isCI) {
-        // C&I: MI-1250 (1.25kW each)
-        miModel = 'MI-1250';
-        miName = 'Micro Inverter MI-1250 (1.25kW)';
-        miKw = 1.25;
-        miFallbackPrice = 4750;
-        miRow = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MI-1250') >= 0 && Object.values(r).join(' ').toLowerCase().indexOf('warranty') >= 0; });
-        if (!miRow) miRow = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MI-1250') >= 0; });
-      } else {
-        // Residential default: MI-500 (0.5kW each)
-        miModel = 'MI-500';
-        miName = 'Micro Inverter MI-500 (0.5kW)';
-        miKw = 0.5;
-        miFallbackPrice = 4400;
-        miRow = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MI-500') >= 0 && Object.values(r).join(' ').toLowerCase().indexOf('warranty') >= 0; });
-        if (!miRow) miRow = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MI-500') >= 0; });
-      }
-      miQty = Math.ceil(systemKw / miKw);
-      var miPrice = miRow ? extractPrice(miRow) : miFallbackPrice;
-      items.push({ part_number: miModel, part_name: miName, manufacturer: 'ATMOCE', category: 'อินเวอร์เตอร์', quantity: miQty, unit_cost: miPrice, total_cost: miQty * miPrice, notes: '' });
-      // Combiner box
-      var combiner = phase === '3P'
-        ? invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MC100T') >= 0; })
-        : invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MC100') >= 0 && Object.values(r).join(' ').indexOf('MC100T') < 0 && Object.values(r).join(' ').indexOf('MC100L') < 0 && Object.values(r).join(' ').indexOf('Wye') < 0; });
-      if (combiner) {
-        var cPrice = extractPrice(combiner);
-        var cName = extractField(combiner, ['sku', 'รายการ']) || (phase === '3P' ? 'MC100T' : 'MC100');
-        var cDesc = extractField(combiner, ['description', 'คำอธิบาย', 'รายละเอียด']) || 'M-Combiner';
-        items.push({ part_number: cName, part_name: cName + ' ' + cDesc, manufacturer: 'ATMOCE', category: 'general', quantity: 1, unit_cost: cPrice, total_cost: cPrice, notes: '' });
-      }
-      // ATMOCE battery
-      if (wantBatt) {
-        var abatt = invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MS-7K') >= 0; });
-        if (abatt) {
-          var abPrice = extractPrice(abatt);
-          items.push({ part_number: 'MS-7K-U', part_name: 'M-Battery 7kWh', manufacturer: 'ATMOCE', category: 'battery', quantity: 1, unit_cost: abPrice, total_cost: abPrice, notes: '' });
+    // Inverter Design Engine — handles exact match + smart combinations
+    var designed = designInverters(invRows, systemKw, phase, invBrand);
+    if (designed.length > 0) {
+      designed.forEach(function(d) {
+        var invPrice = extractPrice(d.row);
+        var note = '';
+        if (designed.length > 1) {
+          note = 'AI designed: ' + designed.length + ' models combined for ' + systemKw + 'kW';
+        } else if (d.qty > 1) {
+          note = 'AI designed: ' + d.qty + 'x ' + d.kw + 'kW = ' + (d.qty * d.kw) + 'kW';
         }
-        wantBatt = false; // handled
-      }
-      // ATMOCE backup
-      if (wantBackup) {
-        var bu = phase === '3P'
-          ? invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MU100T') >= 0; })
-          : invRows.find(function(r) { return Object.values(r).join(' ').indexOf('MU100S') >= 0; });
-        if (bu) {
-          var buPrice = extractPrice(bu);
-          var buName = phase === '3P' ? 'MU100T' : 'MU100S';
-          items.push({ part_number: buName, part_name: buName + ' Backup Box', manufacturer: 'ATMOCE', category: 'general', quantity: 1, unit_cost: buPrice, total_cost: buPrice, notes: '' });
-        }
-        wantBackup = false;
-      }
-    } else if (invBrand === 'Sigenergy') {
-      // Sigenergy: search EC inverters by phase suffix + kW from รายละเอียด
-      var phaseSuffix = phase === '1P' ? 'SP' : 'TP';
-      var ecRows = invRows.filter(function(r) {
-        var vals = Object.values(r).join(' ');
-        return vals.indexOf('Inverter (EC)') >= 0 && vals.indexOf(phaseSuffix) >= 0;
+        items.push({ part_number: d.model, part_name: d.model + (d.type ? ' (' + d.type + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: d.qty, unit_cost: invPrice, total_cost: d.qty * invPrice, notes: note });
       });
-      if (!ecRows.length) {
-        // Fallback to Hybrid
-        ecRows = invRows.filter(function(r) {
-          var vals = Object.values(r).join(' ');
-          return vals.indexOf('Hybrid') >= 0 && vals.indexOf(phaseSuffix) >= 0;
-        });
-      }
+    } else {
+      // Fallback: closest single inverter
       var bestInv = null, bestDiff = 9999;
-      ecRows.forEach(function(r) {
-        var detail = r['รายละเอียด'] || Object.values(r)[2] || '';
-        var m = detail.match(/([\d.]+)\s*kW/i);
-        if (m) {
-          var diff = Math.abs(parseFloat(m[1]) - systemKw);
+      invRows.forEach(function(r) {
+        var vals = Object.values(r).join(' ').toLowerCase();
+        var fb1P = /\b1p\b|1-phase|1phase|single.?phase/i.test(vals);
+        var fb3P = /\b3p\b|3-phase|3phase|three.?phase/i.test(vals);
+        var fbMatch = (!fb1P && !fb3P) || (phase === '1P' && fb1P) || (phase === '3P' && fb3P);
+        if (!fbMatch) return;
+        var firstKey = Object.keys(r)[0];
+        var fv = parseFloat(String(r[firstKey]).replace(/[^\d.]/g, ''));
+        if (fv > 0 && fv <= 1000) {
+          var diff = Math.abs(fv - systemKw);
           if (diff < bestDiff) { bestDiff = diff; bestInv = r; }
         }
       });
       if (bestInv) {
         var invPrice = extractPrice(bestInv);
-        var invModel = bestInv['รุ่น (Model)'] || extractField(bestInv, ['รุ่น', 'model']) || 'SigenStor EC ' + systemKw + 'kW';
-        var invDetail = bestInv['รายละเอียด'] || '';
-        items.push({ part_number: invModel, part_name: invModel + (invDetail ? ' (' + invDetail + ')' : ''), manufacturer: 'Sigenergy', category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: '' });
+        var invModel = extractField(bestInv, ['รุ่น', 'model', 'sku']) || invBrand + ' ' + systemKw + 'kW';
+        var invType = extractField(bestInv, ['ประเภท', 'type']) || '';
+        items.push({ part_number: invModel, part_name: invModel + (invType ? ' (' + invType + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: 'Note: closest available to ' + systemKw + 'kW' });
       }
-    } else {
-      // Inverter Design Engine — handles exact match + smart combinations
-      var designed = designInverters(invRows, systemKw, phase, invBrand);
-      if (designed.length > 0) {
-        designed.forEach(function(d) {
-          var invPrice = extractPrice(d.row);
-          var note = '';
-          if (designed.length > 1) {
-            note = 'AI designed: ' + designed.length + ' models combined for ' + systemKw + 'kW';
-          } else if (d.qty > 1) {
-            note = 'AI designed: ' + d.qty + 'x ' + d.kw + 'kW = ' + (d.qty * d.kw) + 'kW';
-          }
-          items.push({ part_number: d.model, part_name: d.model + (d.type ? ' (' + d.type + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: d.qty, unit_cost: invPrice, total_cost: d.qty * invPrice, notes: note });
-        });
-      } else {
-        // Fallback: closest single inverter
-        var bestInv = null, bestDiff = 9999;
-        invRows.forEach(function(r) {
-          var vals = Object.values(r).join(' ').toLowerCase();
-          var fb1P = /\b1p\b|1-phase|1phase|single.?phase/i.test(vals);
-          var fb3P = /\b3p\b|3-phase|3phase|three.?phase/i.test(vals);
-          var fbMatch = (!fb1P && !fb3P) || (phase === '1P' && fb1P) || (phase === '3P' && fb3P);
-          if (!fbMatch) return;
-          var firstKey = Object.keys(r)[0];
-          var fv = parseFloat(String(r[firstKey]).replace(/[^\d.]/g, ''));
-          if (fv > 0 && fv <= 1000) {
-            var diff = Math.abs(fv - systemKw);
-            if (diff < bestDiff) { bestDiff = diff; bestInv = r; }
-          }
-        });
-        if (bestInv) {
-          var invPrice = extractPrice(bestInv);
-          var invModel = extractField(bestInv, ['รุ่น', 'model', 'sku']) || invBrand + ' ' + systemKw + 'kW';
-          var invType = extractField(bestInv, ['ประเภท', 'type']) || '';
-          items.push({ part_number: invModel, part_name: invModel + (invType ? ' (' + invType + ')' : ''), manufacturer: invBrand, category: 'อินเวอร์เตอร์', quantity: 1, unit_cost: invPrice, total_cost: invPrice, notes: 'Note: closest available to ' + systemKw + 'kW' });
-        }
-      }
-      if (invBrand === 'Huawei') {
-        // Smart Dongle WIFI
-        items.push({ part_number: 'Smart Dongle WIFI', part_name: 'Smart Dongle WIFI', manufacturer: 'Huawei', category: 'general', quantity: 1, unit_cost: 1730, total_cost: 1730, notes: '' });
-        // Power Sensor
-        var ctPrice = phase === '1P' ? 1750 : 3230;
-        var ctName = phase === '1P' ? 'Power Sensor 1P (CT)' : 'Power Sensor 3P (CT)';
-        items.push({ part_number: ctName, part_name: ctName, manufacturer: 'Huawei', category: 'general', quantity: 1, unit_cost: ctPrice, total_cost: ctPrice, notes: '' });
-      }
+    }
+    if (invBrand === 'Huawei') {
+      // Smart Dongle WIFI
+      items.push({ part_number: 'Smart Dongle WIFI', part_name: 'Smart Dongle WIFI', manufacturer: 'Huawei', category: 'general', quantity: 1, unit_cost: 1730, total_cost: 1730, notes: '' });
+      // Power Sensor
+      var ctPrice = phase === '1P' ? 1750 : 3230;
+      var ctName = phase === '1P' ? 'Power Sensor 1P (CT)' : 'Power Sensor 3P (CT)';
+      items.push({ part_number: ctName, part_name: ctName, manufacturer: 'Huawei', category: 'general', quantity: 1, unit_cost: ctPrice, total_cost: ctPrice, notes: '' });
     }
 
     // Sigenergy EV charger
@@ -2223,10 +2200,12 @@ var server = http.createServer(async function(req, res) {
   res.end('{"error":"Not found"}');
 });
 
-var port = (typeof PhusionPassenger !== 'undefined') ? 'passenger' : (process.env.PORT || 3000);
-server.listen(port, function() {
-  console.log('🏠 Nasri LINE Bot listening on ' + port);
-});
+if (require.main === module) {
+  var port = (typeof PhusionPassenger !== 'undefined') ? 'passenger' : (process.env.PORT || 3000);
+  server.listen(port, function() {
+    console.log('🏠 Nasri LINE Bot listening on ' + port);
+  });
+}
 
 // ─── Monthly Archive ─────────────────────────────────────────
 function archiveOldBoms() {
@@ -2295,12 +2274,14 @@ function archiveOldBoms() {
   } catch (e) { console.error('[archive]', e.message); }
 }
 
-// Run archive check on startup and every 24 hours
-archiveOldBoms();
-setInterval(archiveOldBoms, 24 * 60 * 60 * 1000);
+// Run archive check and session cleanup timers (only when running as main module)
+if (require.main === module) {
+  archiveOldBoms();
+  setInterval(archiveOldBoms, 24 * 60 * 60 * 1000);
 
-// Cleanup expired sessions
-setInterval(function() {
-  var now = Date.now();
-  sessions.forEach(function(s, k) { if (now - s.up > TIMEOUT) sessions.delete(k); });
-}, 5 * 60 * 1000);
+  // Cleanup expired sessions
+  setInterval(function() {
+    var now = Date.now();
+    sessions.forEach(function(s, k) { if (now - s.up > TIMEOUT) sessions.delete(k); });
+  }, 5 * 60 * 1000);
+}
