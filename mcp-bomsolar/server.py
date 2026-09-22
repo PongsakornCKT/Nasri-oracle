@@ -411,6 +411,30 @@ def bomsolar_generate_pdf(
 ) -> dict:
     """
     Generate a professional Solar BOM PDF document for Enervia Group projects.
+
+    Args:
+        project_name: Project name (e.g. "Klonkij Intertrade Co.,Ltd. 250kw")
+        project_address: Project location address
+        order_date: Order date in DD/MM/YY format
+        items: List of BOM items, each with keys:
+               part_number, part_name, manufacturer, category,
+               quantity, unit_cost, total_cost, notes
+        output_path: Full path where the PDF will be saved (e.g. "/tmp/bom.pdf")
+        company_name: Company name (default: Enervia Group co.,ltd)
+        notes: Additional notes for the project
+        logo_path: Optional path to logo image
+        cost_summary: Optional cost breakdown dict with keys:
+               equipment_total, vat_7pct, labor, bos, error_cost,
+               crane, pea_mea_fee, grand_total, actual_wp
+        bom_meta: Optional metadata dict with keys:
+               system, phase, panels, kwp, kw_ac, synced_at_thai, package_label
+
+    Returns:
+        dict with keys: success, output_path, error (if any)
+
+    Categories: cable, isolator, general, mounting_rail,
+                mounting_roof_anchor, mounting_clamp, mounting_other,
+                โมดูล, อินเวอร์เตอร์
     """
     if not PDF_AVAILABLE:
         return {

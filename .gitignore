@@ -46,6 +46,9 @@ node_modules/
 nul
 tmppic/
 .mcp-z/
+nasri-line-bot/deploy/boms/
+*.db
+*.sqlite*
 
 # Added by Multi-Agent Workflow Kit
 /.agents

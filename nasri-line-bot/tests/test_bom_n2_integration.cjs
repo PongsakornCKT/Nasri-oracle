@@ -36,6 +36,22 @@ const { parseSystemSpec } = (function() {
         };
       });
       resItems._summaryText = pyRes.summary_text;
+      resItems._bomMeta = {
+        system: pyRes.system,
+        phase: pyRes.phase,
+        panels: pyRes.panels,
+        kwp: pyRes.kwp,
+        kw_ac: pyRes.kw_ac,
+        total_cost: pyRes.total_cost,
+        sale_price: pyRes.sale_price,
+        has_missing_price: pyRes.has_missing_price,
+        missing_items: pyRes.missing_items,
+        package_label: pyRes.package_label,
+        synced_at_thai: pyRes.synced_at_thai,
+        ratio: pyRes.ratio,
+        inverter_sku: pyRes.inverter_sku,
+        inverter_count: pyRes.inverter_count
+      };
       resItems._rawPyRes = pyRes;
       return resItems;
     }
@@ -98,7 +114,19 @@ async function runTests() {
     const res6 = await parseSystemSpec('bom atmoce 40 แผง 2:1 3P'); // 40 * 650 = 26kW
     const meaLine = Array.isArray(res6) && res6.find(l => l.k === 'D:meaFee' || (l.part_name && l.part_name.includes('MEA')));
     assertTest('6. MEA Fee Tier 20<kW<=30 equals 12,500 THB', meaLine && meaLine.unit_cost === 12500, `got fee: ${meaLine ? meaLine.unit_cost : null}`);
-  } catch (e) { assertTest('6. MEA Fee Tier 20<kW<=30', false, e.message); }
+  } catch (e) { assertTest('6. MEA Fee Tier 20<kW<=30 equals 12,500 THB', false, e.message); }
+
+  // 7. ATMOCE AC Coupling Integration
+  try {
+    const res7 = await parseSystemSpec('bom atmoce ac coupling แบต 7 backup');
+    const isNoQuickReply = !res7.isAtmoceQuickReply;
+    const backupLine = Array.isArray(res7) && res7.find(i => i.part_number === 'MU100S' || i.part_number === 'MU100T');
+    const battLine = Array.isArray(res7) && res7.find(i => i.part_number === 'MS-7K-U');
+    const isAcSystem = res7._bomMeta && res7._bomMeta.system === 'atmoce_ac';
+    assertTest('7. ATMOCE AC Coupling integration returns MU100S/T + MS-7K-U and system=atmoce_ac',
+      isNoQuickReply && !!backupLine && !!battLine && isAcSystem,
+      `noQR=${isNoQuickReply}, backup=${!!backupLine}, batt=${!!battLine}, system=${res7._bomMeta ? res7._bomMeta.system : null}`);
+  } catch (e) { assertTest('7. ATMOCE AC Coupling integration', false, e.message); }
 
 
   console.log(`\n=== Results: ${passed}/${passed + failed} passed ===`);

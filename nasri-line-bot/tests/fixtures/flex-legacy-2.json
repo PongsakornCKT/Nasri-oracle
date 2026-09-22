@@ -1,0 +1,244 @@
+{
+  "type": "flex",
+  "altText": "📦 BOM — Custom System • ฿115,000.00",
+  "contents": {
+    "type": "bubble",
+    "size": "kilo",
+    "header": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "text",
+          "text": "📦 BOM รายการต้นทุนภายใน",
+          "weight": "bold",
+          "size": "md",
+          "color": "#ffffff"
+        },
+        {
+          "type": "text",
+          "text": "เอกสารภายใน — ห้ามส่งให้ลูกค้า",
+          "size": "xxs",
+          "color": "#e0e0e0",
+          "margin": "xs"
+        }
+      ],
+      "backgroundColor": "#1a237e",
+      "paddingAll": "12px"
+    },
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        {
+          "type": "text",
+          "text": "Custom System",
+          "weight": "bold",
+          "size": "lg",
+          "wrap": true,
+          "color": "#1a237e"
+        },
+        {
+          "type": "text",
+          "text": "แผง: JA Solar  | Inverter: Huawei  | Phase: 3P",
+          "size": "xs",
+          "color": "#555555",
+          "margin": "xs",
+          "wrap": true
+        },
+        {
+          "type": "separator",
+          "margin": "md"
+        },
+        {
+          "type": "text",
+          "text": "รายการเด่น (Top 5):",
+          "size": "xs",
+          "color": "#888888",
+          "margin": "md",
+          "weight": "bold"
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "margin": "sm",
+          "contents": [
+            {
+              "type": "text",
+              "text": "JAM72S30-550/MR",
+              "size": "xs",
+              "flex": 6,
+              "wrap": true,
+              "color": "#333333"
+            },
+            {
+              "type": "text",
+              "text": "x20",
+              "size": "xs",
+              "flex": 2,
+              "align": "center",
+              "color": "#666666"
+            },
+            {
+              "type": "text",
+              "text": "฿70,000.00",
+              "size": "xs",
+              "flex": 4,
+              "align": "end",
+              "color": "#1a237e",
+              "wrap": true
+            }
+          ]
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "margin": "sm",
+          "contents": [
+            {
+              "type": "text",
+              "text": "SUN2000-10KTL-M1",
+              "size": "xs",
+              "flex": 6,
+              "wrap": true,
+              "color": "#333333"
+            },
+            {
+              "type": "text",
+              "text": "x1",
+              "size": "xs",
+              "flex": 2,
+              "align": "center",
+              "color": "#666666"
+            },
+            {
+              "type": "text",
+              "text": "฿45,000.00",
+              "size": "xs",
+              "flex": 4,
+              "align": "end",
+              "color": "#1a237e",
+              "wrap": true
+            }
+          ]
+        },
+        {
+          "type": "separator",
+          "margin": "md"
+        },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "margin": "md",
+          "spacing": "xs",
+          "contents": [
+            {
+              "type": "box",
+              "layout": "horizontal",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "ค่าอุปกรณ์ (2 รายการ)",
+                  "size": "xs",
+                  "color": "#666666",
+                  "flex": 6
+                },
+                {
+                  "type": "text",
+                  "text": "฿115,000.00",
+                  "size": "xs",
+                  "align": "end",
+                  "weight": "bold",
+                  "color": "#333333",
+                  "flex": 6,
+                  "wrap": true
+                }
+              ]
+            },
+            {
+              "type": "box",
+              "layout": "horizontal",
+              "margin": "xs",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "ต้นทุนรวมทั้งสิ้น (ภายใน)",
+                  "size": "sm",
+                  "weight": "bold",
+                  "color": "#1a237e",
+                  "flex": 6
+                },
+                {
+                  "type": "text",
+                  "text": "฿115,000.00",
+                  "size": "sm",
+                  "align": "end",
+                  "weight": "bold",
+                  "color": "#E8941A",
+                  "flex": 6,
+                  "wrap": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "paddingAll": "12px"
+    },
+    "footer": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "sm",
+      "contents": [
+        {
+          "type": "button",
+          "action": {
+            "type": "message",
+            "label": "📄 สร้าง PDF (ต้นทุนเต๊tm)",
+            "text": "ขอ pdf"
+          },
+          "style": "primary",
+          "color": "#1a237e"
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "spacing": "sm",
+          "contents": [
+            {
+              "type": "button",
+              "action": {
+                "type": "message",
+                "label": "✏️ แก้ไขรายการ",
+                "text": "แก้ไข"
+              },
+              "style": "secondary",
+              "flex": 1
+            },
+            {
+              "type": "button",
+              "action": {
+                "type": "message",
+                "label": "📝 ตั้งชื่อโครงการ",
+                "text": "ชื่อ "
+              },
+              "style": "secondary",
+              "flex": 1
+            }
+          ]
+        },
+        {
+          "type": "button",
+          "action": {
+            "type": "message",
+            "label": "📋 สร้างใบเสนอราคา",
+            "text": "สร้างใบเสนอราคา"
+          },
+          "style": "secondary",
+          "height": "sm"
+        }
+      ],
+      "paddingAll": "12px"
+    }
+  }
+}
